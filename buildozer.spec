@@ -4,35 +4,25 @@ package.name = tibiatools
 package.domain = org.erick
 
 source.dir = .
-source.include_exts = py,kv,json,txt,png,jpg,jpeg,ico,md
+source.include_exts = py,kv,json,txt,md,png,jpg,jpeg,atlas,ttf,otf,ico
 
 version = 0.2.0
 
-requirements = python3,kivy,requests,certifi,plyer
+; NÃO coloque "python3" aqui
+requirements = kivy,requests,certifi,plyer
 
-# Permissões
-android.permissions = INTERNET,FOREGROUND_SERVICE,POST_NOTIFICATIONS,RECEIVE_BOOT_COMPLETED
-
-# Build Android
-android.api = 33
-android.minapi = 24
-android.ndk = 25b
-android.archs = arm64-v8a,armeabi-v7a
-
-# FIX: não deixar o p4a puxar build-tools “do nada” (36.x etc)
-android.build_tools_version = 33.0.2
-
-# AndroidX (recomendado)
-android.enable_androidx = True
-
-# Orientação
+; Vertical
 orientation = portrait
 
-# Service (se você usa watcher em background)
-services = watcher:service/main.py
+android.permissions = INTERNET,FOREGROUND_SERVICE,POST_NOTIFICATIONS,RECEIVE_BOOT_COMPLETED
 
-# Logs do Python no logcat
-android.logcat_filters = *:S python:V
+android.api = 33
+android.minapi = 24
+android.archs = arm64-v8a,armeabi-v7a
+android.enable_androidx = True
+
+; Se você tiver o service:
+services = watcher:service/main.py
 
 [buildozer]
 log_level = 2
