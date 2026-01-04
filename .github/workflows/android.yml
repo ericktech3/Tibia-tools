@@ -2,32 +2,63 @@ name: Build Android APK (Kivy/Buildozer)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ "main" ]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
       - name: Install system deps
         run: |
+          set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y python3 python3-pip git zip unzip openjdk-17-jdk \
+          sudo apt-get install -y \
+            git zip unzip openjdk-17-jdk \
             build-essential autoconf automake libtool pkg-config \
             libssl-dev libffi-dev libltdl-dev \
             libncurses5-dev libncursesw5-dev zlib1g-dev \
-            libbz2-dev libreadline-dev libsqlite3-dev
+            libbz2-dev libreadline-dev libsqlite3-dev \
+            libjpeg-dev libfreetype6-dev liblzma-dev \
+            libgdbm-dev libgdbm-compat-dev \
+            libgl1-mesa-dev libgles2-mesa-dev \
+            libx11-dev libxext-dev
 
-      - name: Install buildozer
+      - name: Install Buildozer (pin Cython)
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install buildozer cython==0.29.36
+          set -euxo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "buildozer==1.5.0" "Cython==0.29.36" virtualenv
+
+      - name: Sanity check (mostra estrutura)
+        run: |
+          set -euxo pipefail
+          python --version
+          buildozer --version
+          echo "== repo root =="
+          ls -la
+          echo "== core =="
+          ls -la core || true
+          echo "== service =="
+          ls -la service || true
+          test -f buildozer.spec
 
       - name: Build APK
         run: |
+          set -euxo pipefail
           buildozer -v android debug
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: apk
