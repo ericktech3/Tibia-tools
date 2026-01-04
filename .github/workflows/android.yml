@@ -10,17 +10,8 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      PYTHON_VERSION: "3.10"
-      ANDROID_API: "33"
-      ANDROID_MINAPI: "24"
-
-      # SDK controlado pelo workflow (não depende do SDK “do runner”)
       ANDROID_SDK_ROOT: /home/runner/android-sdk
       ANDROID_HOME: /home/runner/android-sdk
-      ANDROIDSDK: /home/runner/android-sdk
-
-      # NDK que instalaremos via sdkmanager
-      ANDROID_NDK_VERSION: "25.1.8937393"
 
     steps:
       - name: Checkout
@@ -32,93 +23,74 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.10"
 
       - name: Install system dependencies
         run: |
-          set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            zip unzip git curl \
-            build-essential autoconf automake libtool pkg-config \
-            libffi-dev libssl-dev zlib1g-dev \
-            libjpeg-dev \
-            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
-            libgl1-mesa-dev libgles2-mesa-dev
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            zip unzip \
+            libffi-dev libssl-dev \
+            autoconf automake libtool pkg-config \
+            zlib1g-dev \
+            cmake
 
-      - name: Install Android commandline-tools (sdkmanager) + legacy symlinks
+      - name: Install Android commandline-tools (sdkmanager)
         run: |
-          set -euxo pipefail
-
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"
           cd /tmp
+          curl -sSLo cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q cmdline-tools.zip
+          rm -rf "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
+          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
+          mv cmdline-tools/* "${ANDROID_SDK_ROOT}/cmdline-tools/latest/"
+          echo "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "${ANDROID_SDK_ROOT}/platform-tools" >> $GITHUB_PATH
 
-          # Download do Command-line Tools (stable). (link do Android Developers)
-          curl -sSL -o cmdline-tools.zip \
-            https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
-
-          unzip -q cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
-          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-
-          # Buildozer (dependendo da versão) procura sdkmanager em $SDK/tools/bin
-          mkdir -p "$ANDROID_SDK_ROOT/tools/bin"
-          ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
-          ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" "$ANDROID_SDK_ROOT/tools/bin/avdmanager"
-
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-
-          "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --version
-
-      - name: Accept licenses + install required SDK packages
+      - name: Accept licenses + install required SDK packages (incl. AIDL)
         run: |
-          set -euxo pipefail
+          set -e
+          sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --version
+          # aceita licenças (não falha se der "broken pipe")
+          yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses || true
 
-          # Aceita licenças (não falha o job por “broken pipe” do yes)
-          ( yes | "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null ) || true
-
-          # Pacotes mínimos para o Buildozer/p4a
-          "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" \
+          # instala o que o Buildozer está pedindo no log: build-tools;36.1.0 (tem o aidl)
+          sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" \
             "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;33.0.2" \
-            "ndk;${ANDROID_NDK_VERSION}"
+            "platforms;android-33" \
+            "build-tools;36.1.0" \
+            "build-tools;33.0.2"
 
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROIDNDK=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "Verificando AIDL..."
+          ls -la "${ANDROID_SDK_ROOT}/build-tools" || true
+          test -f "${ANDROID_SDK_ROOT}/build-tools/36.1.0/aidl"
+          "${ANDROID_SDK_ROOT}/build-tools/36.1.0/aidl" --version || true
 
-      - name: Install Buildozer (pin) + Cython (pin)
+      - name: Install Buildozer
         run: |
-          set -euxo pipefail
-          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pip
           python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
 
-      - name: Python sanity (ignore .buildozer)
+      - name: Python sanity (only your code)
         run: |
-          set -euxo pipefail
-          python -m compileall -q . -x '(^|/)\.buildozer(/|$)'
+          python -m compileall -q .
 
       - name: Build APK (debug)
         run: |
-          set -euxo pipefail
-          rm -rf .buildozer || true
-          buildozer -v android debug
+          buildozer -v android debug 2>&1 | tee buildozer.log
 
-      - name: Upload APK artifact
+      - name: Upload APK artifact + logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: apk-debug
-          path: bin/*.apk
-
-      - name: Upload build logs (if any)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
+          name: build-output
           path: |
+            bin/*.apk
+            bin/*.aab
             buildozer.log
-            .buildozer/**/*.log
+          if-no-files-found: warn
