@@ -2,40 +2,33 @@
 title = Tibia Tools
 package.name = tibiatools
 package.domain = org.erick
-
-source.dir = .
-source.include_exts = py,kv,json,txt,png,jpg,jpeg,ttf,ico,md,ini
-# Se você tiver pastas específicas, pode reforçar:
-# source.include_patterns = assets/*,core/*,ui/*,service/*
-
 version = 0.2.0
 
-requirements = python3,kivy,requests,certifi,plyer
+source.dir = .
+source.include_exts = py,kv,png,jpg,jpeg,webp,json,txt,ttf,otf,atlas
 
-# VERTICAL
+# Ajuste seus requirements conforme o seu projeto real
+requirements = python3,kivy,requests,certifi,urllib3,idna,chardet
+
+# VERTICAL (portrait)
 orientation = portrait
+fullscreen = 0
 
-# Android
-android.api = 33
-android.minapi = 24
-android.ndk_api = 24
-
-android.archs = arm64-v8a, armeabi-v7a
-
+# Permissões
 android.permissions = INTERNET,FOREGROUND_SERVICE,POST_NOTIFICATIONS,RECEIVE_BOOT_COMPLETED
 
-# Serviço
-services = watcher:service/main.py
-
-# AndroidX
+# Android config
+android.api = 33
+android.minapi = 24
+android.ndk = 25b
+android.archs = arm64-v8a,armeabi-v7a
 android.enable_androidx = True
 
-# Logcat útil pra debug
-android.logcat_filters = *:S python:D
+# Service (se você realmente usa)
+services = watcher:service/main.py
 
-# NÃO use develop aqui, a menos que você saiba que quer API 36 e NDK 29.
-# p4a.branch = develop   <-- REMOVA se existir
-# p4a.branch = master    <-- opcional (padrão costuma ser master/estável)
+# Logs úteis para debug
+android.logcat_filters = *:S python:V kivy:V
 
 [buildozer]
 log_level = 2
