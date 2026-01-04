@@ -14,6 +14,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ✅ FORÇA Java 17 (Temurin) - ESSENCIAL pro Gradle/Android
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -40,9 +48,11 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install "buildozer==1.5.0" "Cython==0.29.36" virtualenv
 
-      - name: Sanity check (mostra estrutura)
+      - name: Sanity check (mostra estrutura + java)
         run: |
           set -euxo pipefail
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
           python --version
           buildozer --version
           echo "== repo root =="
@@ -56,10 +66,15 @@ jobs:
       - name: Build APK
         run: |
           set -euxo pipefail
-          buildozer -v android debug
+          buildozer -v android debug 2>&1 | tee buildozer.log
 
-      - name: Upload APK artifact
+      # ✅ sempre envia logs e APK (mesmo se falhar)
+      - name: Upload logs and APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: bin/*.apk
+          name: build-output
+          path: |
+            buildozer.log
+            bin/*.apk
+            bin/*.aab
