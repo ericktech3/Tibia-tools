@@ -2,34 +2,37 @@
 title = Tibia Tools
 package.name = tibiatools
 package.domain = org.erick
-version = 0.2.0
 
 source.dir = .
-source.include_exts = py,kv,png,jpg,jpeg,webp,json,txt,ttf,otf,atlas
+source.include_exts = py,png,jpg,jpeg,kv,atlas,json,txt,ttf,otf,db
 
-# Ajuste seus requirements conforme o seu projeto real
-requirements = python3,kivy,requests,certifi,urllib3,idna,chardet
+version = 0.2.0
 
-# VERTICAL (portrait)
+requirements = python3,kivy,requests,certifi,plyer
+
 orientation = portrait
 fullscreen = 0
 
-# Permissões
-android.permissions = INTERNET,FOREGROUND_SERVICE,POST_NOTIFICATIONS,RECEIVE_BOOT_COMPLETED
-
-# Android config
-android.api = 33
-android.minapi = 24
-android.ndk = 25b
-android.archs = arm64-v8a,armeabi-v7a
-android.enable_androidx = True
-
-# Service (se você realmente usa)
-services = watcher:service/main.py
-
-# Logs úteis para debug
-android.logcat_filters = *:S python:V kivy:V
+# Se você usa service no projeto, descomente e ajuste:
+# services = Watcher:service/main.py:foreground
 
 [buildozer]
 log_level = 2
 warn_on_root = 1
+
+[android]
+android.api = 33
+android.minapi = 24
+android.ndk_api = 24
+
+android.archs = arm64-v8a,armeabi-v7a
+
+android.permissions = INTERNET
+
+# MUITO IMPORTANTE no GitHub Actions:
+android.sdk_path = /home/runner/android-sdk
+android.skip_update = True
+android.accept_sdk_license = True
+
+# AndroidX (se você estiver usando libs que exigem)
+android.enable_androidx = True
