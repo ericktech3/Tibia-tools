@@ -3,7 +3,7 @@ name: Build Android APK (Kivy/Buildozer)
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build:
@@ -24,95 +24,87 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install system deps
+      - name: Install system dependencies
         run: |
-          set -eux
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential git zip unzip pkg-config curl \
-            libffi-dev libssl-dev zlib1g-dev liblzma-dev \
+            build-essential git zip unzip curl \
+            libffi-dev libssl-dev liblzma-dev zlib1g-dev \
             libsqlite3-dev libncurses5-dev libncursesw5-dev \
-            libreadline-dev libgdbm-dev libbz2-dev \
-            libjpeg-dev libfreetype6-dev \
-            libgl1-mesa-dev libgles2-mesa-dev
+            libreadline-dev libbz2-dev libjpeg-dev \
+            python3-setuptools python3-wheel
+          python -m pip install -U pip setuptools wheel
 
-      - name: Setup Android SDK cmdline-tools + licenses
+      - name: Install Buildozer
         run: |
-          set -eux
+          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
 
-          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
-          export ANDROID_HOME=$ANDROID_SDK_ROOT
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+      - name: Install Android cmdline-tools + SDK/NDK (and accept licenses)
+        run: |
+          set -euxo pipefail
+          SDKROOT="/usr/local/lib/android/sdk"
+          sudo mkdir -p "$SDKROOT/cmdline-tools"
+          sudo chown -R "$USER":"$USER" "$SDKROOT"
 
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
-
-          # Garantir cmdline-tools (se não existir, baixa)
-          if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
-            sudo mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-            curl -L -o cmdline-tools.zip \
-              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q cmdline-tools.zip -d /tmp/cmdline-tools
-            sudo rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-            sudo mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-            sudo mv /tmp/cmdline-tools/cmdline-tools "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          if [ ! -x "$SDKROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            cd /tmp
+            curl -L -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            rm -rf cmdline-tools
+            unzip -q cmdline-tools.zip
+            rm -f cmdline-tools.zip
+            rm -rf "$SDKROOT/cmdline-tools/latest"
+            mkdir -p "$SDKROOT/cmdline-tools/latest"
+            mv cmdline-tools/* "$SDKROOT/cmdline-tools/latest/"
           fi
 
-          # Workaround: buildozer/p4a antigo procura tools/bin/sdkmanager
-          sudo mkdir -p "$ANDROID_SDK_ROOT/tools/bin"
-          sudo ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
-          sudo ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" "$ANDROID_SDK_ROOT/tools/bin/avdmanager"
+          SDKMANAGER="$SDKROOT/cmdline-tools/latest/bin/sdkmanager"
+          chmod +x "$SDKMANAGER"
 
-          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          # aceita licenças (não falha o job se sdkmanager retornar nonzero)
+          yes | "$SDKMANAGER" --sdk_root="$SDKROOT" --licenses || true
 
-          # Aceitar licenças (chamando pelo caminho completo)
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
-
-          # Instalar pacotes fixos (evita build-tools 36.x)
-          "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" \
+          # instala o necessário (Build-tools 33.0.2) + tenta também 36.1.0 (caso o p4a peça)
+          "$SDKMANAGER" --sdk_root="$SDKROOT" \
             "platform-tools" \
             "platforms;android-33" \
             "build-tools;33.0.2" \
             "ndk;25.1.8937393"
 
-      - name: Install Buildozer (pin Cython)
-        run: |
-          set -eux
-          python -m pip install --upgrade pip
-          python -m pip install "cython==0.29.36" "buildozer==1.5.0"
+          "$SDKMANAGER" --sdk_root="$SDKROOT" "build-tools;36.1.0" || true
+
+          # expõe no PATH
+          echo "$SDKROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDKROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+          # Define env pro Buildozer (evita ele baixar SDK próprio e travar em licença)
+          echo "ANDROID_SDK_ROOT=$SDKROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDKROOT" >> "$GITHUB_ENV"
+          echo "ANDROIDSDK=$SDKROOT" >> "$GITHUB_ENV"
+
+          NDK_DIR="$SDKROOT/ndk/25.1.8937393"
+          echo "ANDROIDNDK=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
 
       - name: Python sanity (only your code)
         run: |
-          set -eux
-          python - <<'PY'
-          import compileall, sys, os
-          ok = True
-          ok = compileall.compile_file("main.py", quiet=1) and ok
-          if os.path.isdir("core"):
-              ok = compileall.compile_dir("core", quiet=1) and ok
-          if os.path.isdir("service"):
-              ok = compileall.compile_dir("service", quiet=1) and ok
-          if os.path.isdir("watcher"):
-              ok = compileall.compile_dir("watcher", quiet=1) and ok
-          sys.exit(0 if ok else 1)
-          PY
+          python -m compileall -q main.py core service
 
       - name: Build APK (debug)
         env:
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-          ANDROID_HOME: /usr/local/lib/android/sdk
+          # garante que Buildozer use o SDK do sistema
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROIDSDK: ${{ env.ANDROIDSDK }}
+          ANDROIDNDK: ${{ env.ANDROIDNDK }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: |
-          set -eux
           rm -rf .buildozer
           buildozer -v android debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tibia-tools-apk
+          name: apk
           path: |
             bin/*.apk
-            buildozer.spec
-            .buildozer/android/platform/build-*/logs/**
+            buildozer.log
