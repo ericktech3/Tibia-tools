@@ -2,37 +2,27 @@
 title = Tibia Tools
 package.name = tibiatools
 package.domain = org.erick
-
 source.dir = .
-source.include_exts = py,png,jpg,jpeg,kv,atlas,json,txt,ttf,otf,db
+source.include_exts = py,kv,json,png,jpg,ttf
 
 version = 0.2.0
-
-requirements = python3,kivy,requests,certifi,plyer
+requirements = python3,kivy,requests,pillow,certifi
 
 orientation = portrait
-fullscreen = 0
+fullscreen = 1
 
-# Se você usa service no projeto, descomente e ajuste:
-# services = Watcher:service/main.py:foreground
+android.permissions = INTERNET,ACCESS_NETWORK_STATE,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
+android.api = 34
+android.minapi = 21
+android.archs = arm64-v8a,armeabi-v7a
+
+# MUITO IMPORTANTE no CI: força o Buildozer a usar o SDK do runner
+android.sdk_path = /usr/local/lib/android/sdk
+
+# Opcional, mas ajuda a não “interagir” com licença no CI
+android.accept_sdk_license = True
+android.skip_update = True
 
 [buildozer]
 log_level = 2
 warn_on_root = 1
-
-[android]
-android.api = 33
-android.minapi = 24
-android.ndk_api = 24
-
-android.archs = arm64-v8a,armeabi-v7a
-
-android.permissions = INTERNET
-
-# MUITO IMPORTANTE no GitHub Actions:
-android.sdk_path = /home/runner/android-sdk
-android.skip_update = True
-android.accept_sdk_license = True
-
-# AndroidX (se você estiver usando libs que exigem)
-android.enable_androidx = True
