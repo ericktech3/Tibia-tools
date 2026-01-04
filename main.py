@@ -375,14 +375,15 @@ class TibiaToolsApp(App):
         self.root.ids.sm.current = screen_name
 
     # ---------------- Favorites ----------------
-    def _refresh_fav_list(self):
-        container = self.root.ids.fav_list
-        container.clear_widgets()
-        for name in self.favorites:
-            w = Factory.FavoriteRow(name=name)
-container.add_widget(w)
+   def _refresh_fav_list(self):
+    container = self.root.ids.fav_list
+    container.clear_widgets()
 
-        self.info_text = f"{len(self.favorites)}/{MAX_FAVORITES} favoritos"
+    for name in self.favorites:
+        w = Factory.FavoriteRow(name=name)
+        container.add_widget(w)
+
+    self.info_text = f"{len(self.favorites)}/{MAX_FAVORITES} favoritos"
 
     def _sync_status(self):
         self.status_text = "MONITOR: ON" if self.monitoring else "MONITOR: OFF"
