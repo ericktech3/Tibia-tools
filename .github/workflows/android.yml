@@ -34,10 +34,6 @@ jobs:
             build-essential autoconf automake libtool pkg-config \
             libssl-dev libffi-dev zlib1g-dev \
             libjpeg-dev libfreetype6-dev \
-            libbz2-dev liblzma-dev \
-            libncurses5-dev libncursesw5-dev \
-            libreadline-dev libsqlite3-dev \
-            libgdbm-dev libgdbm-compat-dev \
             libgl1-mesa-dev libgles2-mesa-dev \
             libx11-dev libxext-dev
 
@@ -47,56 +43,43 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install "buildozer==1.5.0" "Cython==0.29.36" virtualenv
 
-      # ✅ Sanity check SOMENTE do seu código (não compila .buildozer/)
-      - name: Python sanity (only app source)
-        run: |
-          set -euxo pipefail
-          python -m compileall -q main.py core service || true
-          python -m py_compile main.py
-
-      - name: Cache Buildozer
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.buildozer
-            .buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-
-      - name: Setup Android SDK + accept licenses
+      # ✅ instala build-tools e aceita licenças NO SDK QUE VAMOS USAR
+      - name: Setup Android SDK + accept licenses + install build-tools
         run: |
           set -euxo pipefail
           export ANDROID_SDK_ROOT="/usr/local/lib/android/sdk"
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
-
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            echo "sdkmanager não encontrado em $SDKMANAGER"
-            ls -la "$ANDROID_SDK_ROOT" || true
-            ls -la "$ANDROID_SDK_ROOT/cmdline-tools" || true
-            exit 1
-          fi
 
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+          yes | "$SDKMANAGER" --licenses || true
 
-      - name: Sanity check (estrutura + java)
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;36.1.0"
+
+          # prova que aidl existe
+          ls -la "$ANDROID_SDK_ROOT/build-tools/36.1.0" | head -n 50
+          test -f "$ANDROID_SDK_ROOT/build-tools/36.1.0/aidl"
+
+      - name: Sanity check (estrutura)
         run: |
           set -euxo pipefail
           java -version
           python --version
           buildozer --version
-          ls -la
           test -f buildozer.spec
-          ls -la service || true
-          ls -la core || true
+          ls -la
 
       - name: Build APK
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           ANDROID_HOME: /usr/local/lib/android/sdk
+          ACCEPT_EULA: "Y"
         run: |
           set -euxo pipefail
-          buildozer -v android debug 2>&1 | tee buildozer.log
+          # ✅ "yes |" mata qualquer prompt que sobrar
+          yes | buildozer -v android debug 2>&1 | tee buildozer.log
 
       - name: Upload logs and APK
         if: always()
