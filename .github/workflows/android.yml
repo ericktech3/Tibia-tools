@@ -3,7 +3,7 @@ name: Build Android APK (Kivy/Buildozer)
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
 
 jobs:
   build:
@@ -14,14 +14,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Java 17 "de verdade"
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -32,12 +31,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             git zip unzip \
-            openjdk-17-jdk \
             build-essential autoconf automake libtool pkg-config \
-            libssl-dev libffi-dev libltdl-dev \
-            libncurses5-dev libncursesw5-dev zlib1g-dev \
-            libbz2-dev libreadline-dev libsqlite3-dev \
-            libjpeg-dev libfreetype6-dev liblzma-dev \
+            libssl-dev libffi-dev zlib1g-dev \
+            libjpeg-dev libfreetype6-dev \
+            libbz2-dev liblzma-dev \
+            libncurses5-dev libncursesw5-dev \
+            libreadline-dev libsqlite3-dev \
             libgdbm-dev libgdbm-compat-dev \
             libgl1-mesa-dev libgles2-mesa-dev \
             libx11-dev libxext-dev
@@ -48,13 +47,6 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install "buildozer==1.5.0" "Cython==0.29.36" virtualenv
 
-      # Ajuda MUITO quando quebra por erro de sintaxe/import
-      - name: Python sanity (syntax/import)
-        run: |
-          set -euxo pipefail
-          python -m compileall -q .
-          echo "OK compileall"
-
       - name: Cache Buildozer
         uses: actions/cache@v4
         with:
@@ -63,20 +55,47 @@ jobs:
             .buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
+      - name: Python sanity (syntax/import)
+        run: |
+          set -euxo pipefail
+          python -m compileall -q .
+
+      # Extra-robusto: garante SDK cmdline + aceita licenças + instala build-tools pinado
+      - name: Setup Android SDK + accept licenses
+        run: |
+          set -euxo pipefail
+
+          export ANDROID_SDK_ROOT="/usr/local/lib/android/sdk"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager não encontrado em $SDKMANAGER"
+            ls -la "$ANDROID_SDK_ROOT" || true
+            ls -la "$ANDROID_SDK_ROOT/cmdline-tools" || true
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+
       - name: Sanity check (estrutura + java)
         run: |
           set -euxo pipefail
-          echo "JAVA_HOME=$JAVA_HOME"
           java -version
           python --version
           buildozer --version
-          echo "== repo root =="
+          echo "Repo root:"
           ls -la
-          echo "== service =="
+          echo "Pastas esperadas:"
           ls -la service || true
           test -f buildozer.spec
 
       - name: Build APK
+        env:
+          # ajuda algumas builds a acharem o SDK do runner
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          ANDROID_HOME: /usr/local/lib/android/sdk
         run: |
           set -euxo pipefail
           buildozer -v android debug 2>&1 | tee buildozer.log
