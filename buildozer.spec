@@ -2,6 +2,7 @@
 title = Tibia Tools
 package.name = tibiatools
 package.domain = org.erick
+orientation = portrait
 source.dir = .
 source.include_exts = py,kv,json,txt,png,ico,md
 
