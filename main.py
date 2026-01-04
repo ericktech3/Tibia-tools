@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.lang import Builder
+from kivy.factory import Factory
 from kivy.metrics import dp
 from kivy.properties import StringProperty, BooleanProperty, NumericProperty, ListProperty
 from kivy.utils import platform
@@ -378,8 +379,8 @@ class TibiaToolsApp(App):
         container = self.root.ids.fav_list
         container.clear_widgets()
         for name in self.favorites:
-            w = Builder.template("FavoriteRow", name=name)
-            container.add_widget(w)
+            w = Factory.FavoriteRow(name=name)
+container.add_widget(w)
 
         self.info_text = f"{len(self.favorites)}/{MAX_FAVORITES} favoritos"
 
