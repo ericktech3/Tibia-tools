@@ -8,27 +8,31 @@ source.include_exts = py,kv,json,txt,png,jpg,jpeg,ico,md
 
 version = 0.2.0
 
-requirements = python3,kivy,requests,certifi,pyjnius,plyer
+requirements = python3,kivy,requests,certifi,plyer
 
-# logs úteis pra debug no Android
-android.logcat_filters = *:S python:D
-
-# permissões
+# Permissões
 android.permissions = INTERNET,FOREGROUND_SERVICE,POST_NOTIFICATIONS,RECEIVE_BOOT_COMPLETED
 
-# service (se você realmente usa)
-services = watcher:service/main.py
-
-# APIs
+# Build Android
 android.api = 33
 android.minapi = 24
+android.ndk = 25b
 android.archs = arm64-v8a,armeabi-v7a
 
-# ✅ FORÇA VERTICAL
+# FIX: não deixar o p4a puxar build-tools “do nada” (36.x etc)
+android.build_tools_version = 33.0.2
+
+# AndroidX (recomendado)
+android.enable_androidx = True
+
+# Orientação
 orientation = portrait
 
-# ✅ Forçar buildozer usar o SDK do GitHub runner (evita SDK interno quebrado)
-android.sdk_path = /usr/local/lib/android/sdk
+# Service (se você usa watcher em background)
+services = watcher:service/main.py
+
+# Logs do Python no logcat
+android.logcat_filters = *:S python:V
 
 [buildozer]
 log_level = 2
