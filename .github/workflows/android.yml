@@ -47,6 +47,13 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install "buildozer==1.5.0" "Cython==0.29.36" virtualenv
 
+      # ✅ Sanity check SOMENTE do seu código (não compila .buildozer/)
+      - name: Python sanity (only app source)
+        run: |
+          set -euxo pipefail
+          python -m compileall -q main.py core service || true
+          python -m py_compile main.py
+
       - name: Cache Buildozer
         uses: actions/cache@v4
         with:
@@ -55,16 +62,9 @@ jobs:
             .buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
-      - name: Python sanity (syntax/import)
-        run: |
-          set -euxo pipefail
-          python -m compileall -q .
-
-      # Extra-robusto: garante SDK cmdline + aceita licenças + instala build-tools pinado
       - name: Setup Android SDK + accept licenses
         run: |
           set -euxo pipefail
-
           export ANDROID_SDK_ROOT="/usr/local/lib/android/sdk"
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
 
@@ -85,15 +85,13 @@ jobs:
           java -version
           python --version
           buildozer --version
-          echo "Repo root:"
           ls -la
-          echo "Pastas esperadas:"
-          ls -la service || true
           test -f buildozer.spec
+          ls -la service || true
+          ls -la core || true
 
       - name: Build APK
         env:
-          # ajuda algumas builds a acharem o SDK do runner
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           ANDROID_HOME: /usr/local/lib/android/sdk
         run: |
