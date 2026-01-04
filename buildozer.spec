@@ -17,7 +17,7 @@ android.permissions = INTERNET,FOREGROUND_SERVICE,POST_NOTIFICATIONS,RECEIVE_BOO
 android.accept_sdk_license = True
 
 # ✅ service (confere se sua pasta é "service/" minúscula e tem main.py)
-services = watcher:service/main.py
+services = watcher:service/main.py:foreground:sticky
 
 android.api = 33
 android.minapi = 24
