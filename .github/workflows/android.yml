@@ -75,17 +75,18 @@ jobs:
         run: |
           set -euxo pipefail
 
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null
+          # --- aceitar licenças (evita "yes: Broken pipe" quebrar o job) ---
+          set +o pipefail
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
+          set -o pipefail
 
+          # --- instalar pacotes necessários ---
           sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --install \
             "platform-tools" \
             "platforms;android-33" \
             "build-tools;33.0.2"
 
-          # Só pra diagnosticar quando alguém mexer em api/minapi:
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --list | head -n 80 || true
-
-          # Confere se o AIDL existe (é ele que costuma quebrar)
+          # valida se o AIDL existe (principal causa do erro depois)
           test -x "$ANDROID_SDK_ROOT/build-tools/33.0.2/aidl"
           "$ANDROID_SDK_ROOT/build-tools/33.0.2/aidl" --version || true
 
