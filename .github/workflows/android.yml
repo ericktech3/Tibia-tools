@@ -7,90 +7,62 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-
-    env:
-      ANDROID_SDK_ROOT: /home/runner/android-sdk
-      ANDROID_HOME: /home/runner/android-sdk
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            git \
-            zip unzip \
-            libffi-dev libssl-dev \
-            autoconf automake libtool pkg-config \
-            zlib1g-dev \
-            cmake
+            git zip unzip autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 \
+            cmake libffi-dev libssl-dev
 
-      - name: Install Android commandline-tools (sdkmanager)
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses + install SDK packages
+        shell: bash
         run: |
-          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"
-          cd /tmp
-          curl -sSLo cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q cmdline-tools.zip
-          rm -rf "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
-          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
-          mv cmdline-tools/* "${ANDROID_SDK_ROOT}/cmdline-tools/latest/"
-          echo "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "${ANDROID_SDK_ROOT}/platform-tools" >> $GITHUB_PATH
+          # Evita falha por "Broken pipe" do `yes` com pipefail
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          set -o pipefail
 
-      - name: Accept licenses + install required SDK packages (incl. AIDL)
-        run: |
-          set -e
-          sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --version
-          # aceita licenças (não falha se der "broken pipe")
-          yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses || true
-
-          # instala o que o Buildozer está pedindo no log: build-tools;36.1.0 (tem o aidl)
-          sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;36.1.0" \
-            "build-tools;33.0.2"
-
-          echo "Verificando AIDL..."
-          ls -la "${ANDROID_SDK_ROOT}/build-tools" || true
-          test -f "${ANDROID_SDK_ROOT}/build-tools/36.1.0/aidl"
-          "${ANDROID_SDK_ROOT}/build-tools/36.1.0/aidl" --version || true
+          sdkmanager "platform-tools" "build-tools;36.1.0" "platforms;android-34"
 
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
-
-      - name: Python sanity (only your code)
-        run: |
-          python -m compileall -q .
+          pip install buildozer==1.5.0 Cython==0.29.36
 
       - name: Build APK (debug)
+        env:
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROIDSDK: /usr/local/lib/android/sdk
         run: |
           buildozer -v android debug 2>&1 | tee buildozer.log
 
-      - name: Upload APK artifact + logs
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-output
           path: |
             bin/*.apk
-            bin/*.aab
             buildozer.log
-          if-no-files-found: warn
