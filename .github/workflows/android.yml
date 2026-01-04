@@ -10,12 +10,17 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
+      PYTHON_VERSION: "3.10"
+      ANDROID_API: "33"
+      ANDROID_MINAPI: "24"
+
+      # SDK controlado pelo workflow (não depende do SDK “do runner”)
       ANDROID_SDK_ROOT: /home/runner/android-sdk
       ANDROID_HOME: /home/runner/android-sdk
       ANDROIDSDK: /home/runner/android-sdk
-      # Mantém coerência com o buildozer.spec
-      ANDROIDAPI: "33"
-      ANDROIDMINAPI: "24"
+
+      # NDK que instalaremos via sdkmanager
+      ANDROID_NDK_VERSION: "25.1.8937393"
 
     steps:
       - name: Checkout
@@ -27,87 +32,93 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
+          set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip curl \
-            autoconf automake libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 \
-            cmake libffi-dev libssl-dev gettext \
-            build-essential
+          sudo apt-get install -y --no-install-recommends \
+            zip unzip git curl \
+            build-essential autoconf automake libtool pkg-config \
+            libffi-dev libssl-dev zlib1g-dev \
+            libjpeg-dev \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
+            libgl1-mesa-dev libgles2-mesa-dev
 
-      - name: Install Android commandline-tools (sdkmanager)
-        shell: bash
+      - name: Install Android commandline-tools (sdkmanager) + legacy symlinks
         run: |
           set -euxo pipefail
+
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-          cd "$RUNNER_TEMP"
+          cd /tmp
 
-          # Command-line tools (Linux) - pacote padrão do Google
-          curl -fL -o cmdline-tools.zip \
-            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          # Download do Command-line Tools (stable). (link do Android Developers)
+          curl -sSL -o cmdline-tools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
 
-          rm -rf cmdline-tools-tmp
-          mkdir -p cmdline-tools-tmp
-          unzip -q cmdline-tools.zip -d cmdline-tools-tmp
+          unzip -q cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
 
-          # Estrutura esperada: $ANDROID_SDK_ROOT/cmdline-tools/latest/...
-          rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          mv cmdline-tools-tmp/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
-
-          # Compatibilidade com Buildozer (ele tenta usar tools/bin/sdkmanager)
+          # Buildozer (dependendo da versão) procura sdkmanager em $SDK/tools/bin
           mkdir -p "$ANDROID_SDK_ROOT/tools/bin"
           ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
           ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" "$ANDROID_SDK_ROOT/tools/bin/avdmanager"
 
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
-      - name: Accept Android SDK licenses + Install required packages
-        shell: bash
+          "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --version
+
+      - name: Accept licenses + install required SDK packages
         run: |
           set -euxo pipefail
 
-          # --- aceitar licenças (evita "yes: Broken pipe" quebrar o job) ---
-          set +o pipefail
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
-          set -o pipefail
+          # Aceita licenças (não falha o job por “broken pipe” do yes)
+          ( yes | "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null ) || true
 
-          # --- instalar pacotes necessários ---
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --install \
+          # Pacotes mínimos para o Buildozer/p4a
+          "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" \
             "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2"
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;33.0.2" \
+            "ndk;${ANDROID_NDK_VERSION}"
 
-          # valida se o AIDL existe (principal causa do erro depois)
-          test -x "$ANDROID_SDK_ROOT/build-tools/33.0.2/aidl"
-          "$ANDROID_SDK_ROOT/build-tools/33.0.2/aidl" --version || true
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROIDNDK=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
 
-      - name: Install Buildozer (pin Cython)
+      - name: Install Buildozer (pin) + Cython (pin)
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "buildozer==1.5.0" "Cython==0.29.34"
+          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
 
-      - name: Python sanity (only your code)
+      - name: Python sanity (ignore .buildozer)
         run: |
-          python -m compileall -q main.py core ui service || true
+          set -euxo pipefail
+          python -m compileall -q . -x '(^|/)\.buildozer(/|$)'
 
       - name: Build APK (debug)
         run: |
+          set -euxo pipefail
+          rm -rf .buildozer || true
           buildozer -v android debug
 
       - name: Upload APK artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: apk
+          name: apk-debug
+          path: bin/*.apk
+
+      - name: Upload build logs (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
           path: |
-            bin/*.apk
-            bin/*.aab
             buildozer.log
+            .buildozer/**/*.log
