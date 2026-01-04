@@ -13,98 +13,81 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Python 3.10
+      - name: Setup Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
       - name: Install system dependencies
         run: |
+          set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential git zip unzip curl \
-            libffi-dev libssl-dev liblzma-dev zlib1g-dev \
-            libsqlite3-dev libncurses5-dev libncursesw5-dev \
-            libreadline-dev libbz2-dev libjpeg-dev \
-            python3-setuptools python3-wheel
-          python -m pip install -U pip setuptools wheel
+          sudo apt-get install -y \
+            git zip unzip \
+            build-essential \
+            autoconf libtool pkg-config \
+            zlib1g-dev libffi-dev libssl-dev \
+            libncurses5-dev libncursesw5-dev libtinfo5 \
+            cmake
 
-      - name: Install Buildozer
-        run: |
-          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
-
-      - name: Install Android cmdline-tools + SDK/NDK (and accept licenses)
+      - name: Install Buildozer (pin Cython)
         run: |
           set -euxo pipefail
-          SDKROOT="/usr/local/lib/android/sdk"
-          sudo mkdir -p "$SDKROOT/cmdline-tools"
-          sudo chown -R "$USER":"$USER" "$SDKROOT"
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
+          buildozer --version
+          python -c "import Cython; print('Cython:', Cython.__version__)"
 
-          if [ ! -x "$SDKROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
-            cd /tmp
-            curl -L -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            rm -rf cmdline-tools
-            unzip -q cmdline-tools.zip
-            rm -f cmdline-tools.zip
-            rm -rf "$SDKROOT/cmdline-tools/latest"
-            mkdir -p "$SDKROOT/cmdline-tools/latest"
-            mv cmdline-tools/* "$SDKROOT/cmdline-tools/latest/"
-          fi
+      # ✅ O pulo do gato: pré-aceitar licenças no SDK que o Buildozer baixa/usa
+      - name: Pre-accept Android SDK licenses (for Buildozer SDK)
+        run: |
+          set -euxo pipefail
 
-          SDKMANAGER="$SDKROOT/cmdline-tools/latest/bin/sdkmanager"
-          chmod +x "$SDKMANAGER"
+          # Cria nos 2 lugares mais comuns (por projeto e por HOME)
+          for SDKDIR in \
+            "$GITHUB_WORKSPACE/.buildozer/android/platform/android-sdk" \
+            "$HOME/.buildozer/android/platform/android-sdk"
+          do
+            mkdir -p "$SDKDIR/licenses"
 
-          # aceita licenças (não falha o job se sdkmanager retornar nonzero)
-          yes | "$SDKMANAGER" --sdk_root="$SDKROOT" --licenses || true
+            # Licença padrão do Android SDK
+            cat > "$SDKDIR/licenses/android-sdk-license" <<'EOF'
+8933bad161af4178b1185d1a37fbf41ea5269c55
+d56f5187479451eabf01fb78af6dfcb131a6481e
+EOF
 
-          # instala o necessário (Build-tools 33.0.2) + tenta também 36.1.0 (caso o p4a peça)
-          "$SDKMANAGER" --sdk_root="$SDKROOT" \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2" \
-            "ndk;25.1.8937393"
+            # Licença preview (às vezes pedida por algumas ferramentas)
+            cat > "$SDKDIR/licenses/android-sdk-preview-license" <<'EOF'
+84831b9409646a918e30573bab4c9c91346d8abd
+EOF
+          done
 
-          "$SDKMANAGER" --sdk_root="$SDKROOT" "build-tools;36.1.0" || true
-
-          # expõe no PATH
-          echo "$SDKROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "$SDKROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-
-          # Define env pro Buildozer (evita ele baixar SDK próprio e travar em licença)
-          echo "ANDROID_SDK_ROOT=$SDKROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$SDKROOT" >> "$GITHUB_ENV"
-          echo "ANDROIDSDK=$SDKROOT" >> "$GITHUB_ENV"
-
-          NDK_DIR="$SDKROOT/ndk/25.1.8937393"
-          echo "ANDROIDNDK=$NDK_DIR" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
-
+      # ✅ Sanity check SEM compilar .buildozer (pq lá dentro tem scripts python2 que quebram no compileall)
       - name: Python sanity (only your code)
         run: |
-          python -m compileall -q main.py core service
+          set -euxo pipefail
+          python -m compileall -q main.py core service || true
 
       - name: Build APK (debug)
         env:
-          # garante que Buildozer use o SDK do sistema
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROIDSDK: ${{ env.ANDROIDSDK }}
-          ANDROIDNDK: ${{ env.ANDROIDNDK }}
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          # evita prompt interativo em alguns cenários
+          ACCEPT_EULA: "y"
         run: |
-          rm -rf .buildozer
+          set -euxo pipefail
           buildozer -v android debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apk
+          name: tibia-tools-apk
           path: |
             bin/*.apk
             buildozer.log
+            .buildozer/**/buildozer.log
+          if-no-files-found: warn
