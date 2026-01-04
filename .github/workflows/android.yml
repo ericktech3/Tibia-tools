@@ -13,73 +13,97 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Python 3.10
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install system dependencies
+      - name: Install system deps
         run: |
-          set -euxo pipefail
+          set -eux
           sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip \
-            build-essential \
-            autoconf libtool pkg-config \
-            zlib1g-dev libffi-dev libssl-dev \
-            libncurses5-dev libncursesw5-dev libtinfo5 \
-            cmake
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git zip unzip pkg-config curl \
+            libffi-dev libssl-dev zlib1g-dev liblzma-dev \
+            libsqlite3-dev libncurses5-dev libncursesw5-dev \
+            libreadline-dev libgdbm-dev libbz2-dev \
+            libjpeg-dev libfreetype6-dev \
+            libgl1-mesa-dev libgles2-mesa-dev
+
+      - name: Setup Android SDK cmdline-tools + licenses
+        run: |
+          set -eux
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          export ANDROID_HOME=$ANDROID_SDK_ROOT
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+
+          # Garantir cmdline-tools (se não existir, baixa)
+          if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            sudo mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+            curl -L -o cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q cmdline-tools.zip -d /tmp/cmdline-tools
+            sudo rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+            sudo mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+            sudo mv /tmp/cmdline-tools/cmdline-tools "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          fi
+
+          # Workaround: buildozer/p4a antigo procura tools/bin/sdkmanager
+          sudo mkdir -p "$ANDROID_SDK_ROOT/tools/bin"
+          sudo ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
+          sudo ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" "$ANDROID_SDK_ROOT/tools/bin/avdmanager"
+
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          # Aceitar licenças
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses
+
+          # Instalar pacotes fixos (evita build-tools 36.x)
+          "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2" \
+            "ndk;25.1.8937393"
 
       - name: Install Buildozer (pin Cython)
         run: |
-          set -euxo pipefail
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
-          buildozer --version
-          python -c "import Cython; print('Cython:', Cython.__version__)"
+          set -eux
+          python -m pip install --upgrade pip
+          python -m pip install "cython==0.29.36" "buildozer==1.5.0"
 
-      # ✅ O pulo do gato: pré-aceitar licenças no SDK que o Buildozer baixa/usa
-      - name: Pre-accept Android SDK licenses (for Buildozer SDK)
-        run: |
-          set -euxo pipefail
-
-          # Cria nos 2 lugares mais comuns (por projeto e por HOME)
-          for SDKDIR in \
-            "$GITHUB_WORKSPACE/.buildozer/android/platform/android-sdk" \
-            "$HOME/.buildozer/android/platform/android-sdk"
-          do
-            mkdir -p "$SDKDIR/licenses"
-
-            # Licença padrão do Android SDK
-            cat > "$SDKDIR/licenses/android-sdk-license" <<'EOF'
-8933bad161af4178b1185d1a37fbf41ea5269c55
-d56f5187479451eabf01fb78af6dfcb131a6481e
-EOF
-
-            # Licença preview (às vezes pedida por algumas ferramentas)
-            cat > "$SDKDIR/licenses/android-sdk-preview-license" <<'EOF'
-84831b9409646a918e30573bab4c9c91346d8abd
-EOF
-          done
-
-      # ✅ Sanity check SEM compilar .buildozer (pq lá dentro tem scripts python2 que quebram no compileall)
       - name: Python sanity (only your code)
         run: |
-          set -euxo pipefail
-          python -m compileall -q main.py core service || true
+          set -eux
+          python - <<'PY'
+          import compileall, os, sys
+
+          ok = True
+          ok = compileall.compile_file("main.py", quiet=1) and ok
+          for d in ("core", "service", "watcher"):
+            if os.path.isdir(d):
+              ok = compileall.compile_dir(d, quiet=1) and ok
+
+          sys.exit(0 if ok else 1)
+          PY
 
       - name: Build APK (debug)
         env:
-          # evita prompt interativo em alguns cenários
-          ACCEPT_EULA: "y"
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          ANDROID_HOME: /usr/local/lib/android/sdk
         run: |
-          set -euxo pipefail
+          set -eux
+          rm -rf .buildozer bin
           buildozer -v android debug
 
       - name: Upload APK artifact
@@ -88,6 +112,5 @@ EOF
           name: tibia-tools-apk
           path: |
             bin/*.apk
-            buildozer.log
-            .buildozer/**/buildozer.log
-          if-no-files-found: warn
+            buildozer.spec
+            .buildozer/android/platform/build-*/logs/**
