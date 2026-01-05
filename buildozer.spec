@@ -1,26 +1,42 @@
 [app]
+
+# (str) Title of your application
 title = Tibia Tools
+
+# (str) Package name
 package.name = tibiatools
+
+# (str) Package domain (needed for android/ios packaging)
 package.domain = org.erick
 
+# (str) Source code where the main.py live
 source.dir = .
-source.include_exts = py,kv,png,jpg,jpeg,txt,json,ttf,atlas
 
+# (list) Source files to include (let empty to include all the files)
+source.include_exts = py,kv,png,jpg,jpeg,txt,json,ttf,atlas,ico
+
+# (str) Application versioning (method 1)
 version = 0.1.0
 
-requirements = python3,kivy,kivymd,certifi,requests,beautifulsoup4
+# (list) Application requirements
+# ✅ trava o KivyMD na versão compatível com MDBottomNavigation etc.
+requirements = python3,kivy,kivymd==1.2.0,requests,certifi,beautifulsoup4
 
+# (str) Supported orientation (one of landscape, portrait or all)
 orientation = portrait
 
-# Android
-android.permissions = INTERNET
+# (str) Fullscreen mode (0 = not fullscreen)
+fullscreen = 0
+
+
+# --- ANDROID ---
 android.api = 33
-android.minapi = 21
+android.minapi = 24
 android.ndk = 25b
 android.archs = arm64-v8a,armeabi-v7a
 
-# evita prompt de licença no CI (importante!)
-android.accept_sdk_license = True
+# Permissões mínimas (INTERNET é essencial se você busca dados online)
+android.permissions = INTERNET
 
-# (opcional) melhora logs em debug
-log_level = 2
+# ✅ evita prompt interativo de licença no GitHub Actions
+android.accept_sdk_license = True
