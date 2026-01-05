@@ -8,7 +8,9 @@ source.include_exts = py,kv,png,jpg,jpeg,txt,json,ttf,atlas
 
 version = 0.1.0
 
-requirements = python3,kivy,kivymd,requests,certifi
+requirements = python3,kivy,kivymd,certifi,requests,beautifulsoup4
+
+orientation = portrait
 
 # Android
 android.permissions = INTERNET
