@@ -40,12 +40,12 @@ jobs:
             libjpeg-dev libpng-dev
           sudo apt-get clean
 
-      - name: Install Android commandline-tools (sdkmanager)
+      - name: Install Android commandline-tools (sdkmanager) + legacy shim
         run: |
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
           cd /tmp
 
-          # Command line tools (zip oficial do Google)
+          # Command line tools oficiais
           curl -sSLo cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
 
           rm -rf cmdline-tools
@@ -55,27 +55,20 @@ jobs:
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
           mv cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
 
-          # PATH para ESTE step + próximos steps
+          # PATH para este step + próximos
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
+          # 🔥 Compatibilidade: buildozer/p4a antigo procura tools/bin/sdkmanager
+          mkdir -p "$ANDROID_SDK_ROOT/tools/bin"
+          ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
+          ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" "$ANDROID_SDK_ROOT/tools/bin/avdmanager"
+
           sdkmanager --version
+          "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --version
 
-      - name: Accept licenses + install required SDK packages (AIDL)
-        run: |
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-
-          # NÃO use "set -o pipefail" aqui — evita quebrar o "yes | ..."
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
-
-          # Instala o necessário (AIDL fica dentro do build-tools)
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2"
-
-      - name: Fix buildozer.spec (CRLF + força usar ANDROID_SDK_ROOT)
+      - name: Detect android.api from buildozer.spec (auto)
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -85,6 +78,40 @@ jobs:
           if not p.exists():
               raise SystemExit("buildozer.spec não encontrado na raiz do repositório.")
 
+          txt = p.read_text(encoding="utf-8", errors="ignore")
+          # pega android.api = N
+          m = re.search(r"(?m)^\s*android\.api\s*=\s*(\d+)\s*$", txt)
+          android_api = m.group(1) if m else "33"
+
+          # salva em env do GitHub Actions
+          with open("/home/runner/work/_temp/android_env", "w") as f:
+              f.write(f"ANDROID_API={android_api}\n")
+
+          print("ANDROID_API =", android_api)
+          PY
+          cat /home/runner/work/_temp/android_env >> "$GITHUB_ENV"
+
+      - name: Accept licenses + install required SDK packages (AIDL / build-tools)
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+
+          # Aceita licenças (sem pipefail pra não quebrar por broken pipe)
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
+
+          # Instala o SDK que o buildozer.spec pede
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;33.0.2" \
+            "build-tools;36.1.0"
+
+      - name: Fix buildozer.spec (CRLF -> LF + força android.sdk_path)
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("buildozer.spec")
           text = p.read_text(encoding="utf-8", errors="ignore")
           text = text.replace("\r\n", "\n").replace("\r", "\n")  # CRLF -> LF
 
@@ -107,10 +134,9 @@ jobs:
 
           sdk_root = "/home/runner/android-sdk"
           text = set_key("app", "android.sdk_path", sdk_root, text)
-          text = set_key("app", "android.skip_update", "True", text)
 
           p.write_text(text.strip() + "\n", encoding="utf-8")
-          print("buildozer.spec ajustado (LF + android.sdk_path + android.skip_update).")
+          print("buildozer.spec ajustado (LF + android.sdk_path).")
           PY
 
       - name: Install Buildozer
