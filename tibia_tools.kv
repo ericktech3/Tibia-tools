@@ -1,159 +1,206 @@
 #:import dp kivy.metrics.dp
 
-<MoreItem@OneLineIconListItem>:
+<MoreItem>:
     icon: "chevron-right"
     IconLeftWidget:
         icon: root.icon
 
-RootSM:
-    HomeScreen:
+ScreenManager:
+    id: screen_manager
+
+    HomeTabs:
         name: "home"
+
     BossesScreen:
         name: "bosses"
+
     BoostedScreen:
         name: "boosted"
+
     TrainingScreen:
         name: "training"
+
     ImbuementsScreen:
         name: "imbuements"
+
     HuntScreen:
         name: "hunt"
 
 
 <HomeScreen@MDScreen>:
-    char_last_url: ""
+    char_last: ""
     MDBoxLayout:
         orientation: "vertical"
 
         MDTopAppBar:
             title: "Tibia Tools"
-            elevation: 2
+            left_action_items: [["menu", lambda x: nav_drawer.set_state("toggle")]]
 
-        MDBottomNavigation:
-            panel_color: app.theme_cls.bg_normal
-
-            MDBottomNavigationItem:
-                name: "tab_char"
-                text: "Char"
-                icon: "account-search"
-
+        MDNavigationLayout:
+            MDNavigationDrawer:
+                id: nav_drawer
                 MDBoxLayout:
                     orientation: "vertical"
                     padding: dp(12)
-                    spacing: dp(10)
-
-                    MDTextField:
-                        id: char_name
-                        hint_text: "Nome do personagem"
-                        mode: "rectangle"
-
-                    MDRaisedButton:
-                        text: "Buscar"
-                        on_release: app.search_character()
-
-                    MDRaisedButton:
-                        text: "Abrir no Tibia.com"
-                        on_release: app.open_last_in_browser()
-
-                    MDRaisedButton:
-                        text: "Favoritar"
-                        on_release: app.add_current_to_favorites()
+                    spacing: dp(12)
 
                     MDLabel:
-                        id: char_status
-                        text: "Faça uma busca."
-                        halign: "left"
-                        valign: "top"
+                        text: "Menu"
+                        font_style: "H6"
                         size_hint_y: None
-                        height: self.texture_size[1] + dp(20)
+                        height: self.texture_size[1]
 
-            MDBottomNavigationItem:
-                name: "tab_bless"
-                text: "Bless"
-                icon: "shield-check"
+                    MDList:
+                        OneLineIconListItem:
+                            text: "Home"
+                            on_release:
+                                app.go("home")
+                                nav_drawer.set_state("close")
+                            IconLeftWidget:
+                                icon: "home"
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    padding: dp(12)
-                    spacing: dp(10)
+                        OneLineIconListItem:
+                            text: "Bosses"
+                            on_release:
+                                app.go("bosses")
+                                nav_drawer.set_state("close")
+                            IconLeftWidget:
+                                icon: "sword"
 
-                    MDTextField:
-                        id: bless_level
-                        hint_text: "Level"
-                        mode: "rectangle"
-                        input_filter: "int"
+                        OneLineIconListItem:
+                            text: "Boosted"
+                            on_release:
+                                app.go("boosted")
+                                nav_drawer.set_state("close")
+                            IconLeftWidget:
+                                icon: "fire"
 
+                        OneLineIconListItem:
+                            text: "Treino"
+                            on_release:
+                                app.go("training")
+                                nav_drawer.set_state("close")
+                            IconLeftWidget:
+                                icon: "dumbbell"
+
+                        OneLineIconListItem:
+                            text: "Imbuements"
+                            on_release:
+                                app.go("imbuements")
+                                nav_drawer.set_state("close")
+                            IconLeftWidget:
+                                icon: "alchemy"
+
+                        OneLineIconListItem:
+                            text: "Hunt Analyzer"
+                            on_release:
+                                app.go("hunt")
+                                nav_drawer.set_state("close")
+                            IconLeftWidget:
+                                icon: "chart-line"
+
+            MDTabs:
+                id: tabs
+                on_tab_switch: app.on_tab_switch(*args)
+
+                MDTabsBase:
+                    text: "Char"
                     MDBoxLayout:
-                        size_hint_y: None
-                        height: dp(48)
-                        spacing: dp(10)
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
+
+                        MDTextField:
+                            id: char_name
+                            hint_text: "Nome do personagem"
+                            text: root.char_last
+
+                        MDRectangleFlatButton:
+                            text: "Buscar"
+                            on_release: app.fetch_character()
 
                         MDLabel:
-                            text: "PvP:"
-                            size_hint_x: None
-                            width: dp(60)
-                            valign: "middle"
+                            id: char_result
+                            text: ""
+                            halign: "left"
+                            size_hint_y: None
+                            height: self.texture_size[1]
 
-                        MDSwitch:
-                            id: bless_pvp
-                            active: True
+                MDTabsBase:
+                    text: "Bless"
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
 
-                    MDRaisedButton:
-                        text: "Calcular"
-                        on_release: app.calc_blessings()
+                        MDTextField:
+                            id: bless_level
+                            hint_text: "Level"
+                            input_filter: "int"
 
-                    MDLabel:
-                        id: bless_result
-                        text: ""
-                        halign: "left"
-                        valign: "top"
+                        MDRectangleFlatButton:
+                            text: "Calcular"
+                            on_release: app.calc_blessings()
 
-            MDBottomNavigationItem:
-                name: "tab_fav"
-                text: "Favoritos"
-                icon: "star"
+                        MDLabel:
+                            id: bless_result
+                            text: ""
+                            halign: "left"
+                            size_hint_y: None
+                            height: self.texture_size[1]
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    padding: dp(8)
-                    spacing: dp(8)
+                MDTabsBase:
+                    text: "Favoritos"
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
 
-                    MDLabel:
-                        text: "Toque em um favorito para opções."
-                        size_hint_y: None
-                        height: dp(24)
+                        MDTextField:
+                            id: fav_name
+                            hint_text: "Adicionar favorito (nome do char)"
 
+                        MDRectangleFlatButton:
+                            text: "Adicionar"
+                            on_release: app.add_favorite()
+
+                        ScrollView:
+                            MDList:
+                                id: favorites_list
+
+                MDTabsBase:
+                    text: "Mais"
                     ScrollView:
                         MDList:
-                            id: fav_list
+                            OneLineIconListItem:
+                                text: "Bosses (ExevoPan)"
+                                on_release: app.go("bosses")
+                                IconLeftWidget:
+                                    icon: "sword"
 
-            MDBottomNavigationItem:
-                name: "tab_more"
-                text: "Mais"
-                icon: "dots-horizontal"
+                            OneLineIconListItem:
+                                text: "Boosted"
+                                on_release: app.go("boosted")
+                                IconLeftWidget:
+                                    icon: "fire"
 
-                ScrollView:
-                    MDList:
-                        MoreItem:
-                            text: "Bosses (ExevoPan)"
-                            icon: "skull"
-                            on_release: app.open_more_target("bosses")
-                        MoreItem:
-                            text: "Boosted"
-                            icon: "star-four-points"
-                            on_release: app.open_more_target("boosted")
-                        MoreItem:
-                            text: "Treino (Exercise)"
-                            icon: "dumbbell"
-                            on_release: app.open_more_target("training")
-                        MoreItem:
-                            text: "Imbuements"
-                            icon: "flash"
-                            on_release: app.open_more_target("imbuements")
-                        MoreItem:
-                            text: "Hunt Analyzer"
-                            icon: "chart-bar"
-                            on_release: app.open_more_target("hunt")
+                            OneLineIconListItem:
+                                text: "Treino (Exercise)"
+                                on_release: app.go("training")
+                                IconLeftWidget:
+                                    icon: "dumbbell"
+
+                            OneLineIconListItem:
+                                text: "Imbuements"
+                                on_release: app.go("imbuements")
+                                IconLeftWidget:
+                                    icon: "alchemy"
+
+                            OneLineIconListItem:
+                                text: "Hunt Analyzer"
+                                on_release: app.go("hunt")
+                                IconLeftWidget:
+                                    icon: "chart-line"
 
 
 <BossesScreen@MDScreen>:
@@ -161,44 +208,17 @@ RootSM:
         orientation: "vertical"
 
         MDTopAppBar:
-            title: "Bosses (ExevoPan)"
-            left_action_items: [["arrow-left", lambda x: app.back_home()]]
-            elevation: 2
+            title: "Bosses"
+            left_action_items: [["arrow-left", lambda x: app.go("home")]]
 
-        MDBoxLayout:
-            orientation: "vertical"
-            padding: dp(12)
-            spacing: dp(10)
+        MDRectangleFlatButton:
+            text: "Atualizar"
+            pos_hint: {"center_x": .5}
+            on_release: app.update_bosses()
 
-            MDBoxLayout:
-                size_hint_y: None
-                height: dp(56)
-                spacing: dp(8)
-
-                MDTextField:
-                    id: world_field
-                    hint_text: "World"
-                    mode: "rectangle"
-
-                MDIconButton:
-                    id: world_drop
-                    icon: "menu-down"
-                    on_release:
-                        if app._menu_world: app._menu_world.open()
-
-            MDRaisedButton:
-                text: "Buscar Bosses"
-                on_release: app.bosses_fetch()
-
-            MDLabel:
-                id: boss_status
-                text: ""
-                size_hint_y: None
-                height: self.texture_size[1] + dp(10)
-
-            ScrollView:
-                MDList:
-                    id: boss_list
+        ScrollView:
+            MDList:
+                id: bosses_list
 
 
 <BoostedScreen@MDScreen>:
@@ -207,40 +227,20 @@ RootSM:
 
         MDTopAppBar:
             title: "Boosted"
-            left_action_items: [["arrow-left", lambda x: app.back_home()]]
-            right_action_items: [["refresh", lambda x: app.update_boosted()]]
-            elevation: 2
+            left_action_items: [["arrow-left", lambda x: app.go("home")]]
 
-        MDBoxLayout:
-            orientation: "vertical"
-            padding: dp(12)
-            spacing: dp(12)
+        MDRectangleFlatButton:
+            text: "Atualizar"
+            pos_hint: {"center_x": .5}
+            on_release: app.update_boosted()
 
-            MDLabel:
-                id: boost_status
-                text: ""
-                size_hint_y: None
-                height: dp(24)
-
-            MDCard:
-                padding: dp(12)
-                size_hint_y: None
-                height: dp(120)
-                MDBoxLayout:
-                    orientation: "vertical"
-                    spacing: dp(6)
-                    MDLabel:
-                        text: "Boosted Creature:"
-                        bold: True
-                    MDLabel:
-                        id: boost_creature
-                        text: "-"
-                    MDLabel:
-                        text: "Boosted Boss:"
-                        bold: True
-                    MDLabel:
-                        id: boost_boss
-                        text: "-"
+        MDLabel:
+            id: boosted_label
+            text: ""
+            halign: "left"
+            padding: dp(12), dp(12)
+            size_hint_y: None
+            height: self.texture_size[1]
 
 
 <TrainingScreen@MDScreen>:
@@ -248,110 +248,8 @@ RootSM:
         orientation: "vertical"
 
         MDTopAppBar:
-            title: "Treino (Exercise)"
-            left_action_items: [["arrow-left", lambda x: app.back_home()]]
-            elevation: 2
-
-        ScrollView:
-            MDBoxLayout:
-                orientation: "vertical"
-                padding: dp(12)
-                spacing: dp(10)
-                size_hint_y: None
-                height: self.minimum_height
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(56)
-                    spacing: dp(8)
-
-                    MDTextField:
-                        id: skill_field
-                        hint_text: "Skill"
-                        text: "Sword"
-                        mode: "rectangle"
-                        readonly: True
-
-                    MDIconButton:
-                        id: skill_drop
-                        icon: "menu-down"
-                        on_release:
-                            if app._menu_skill: app._menu_skill.open()
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(56)
-                    spacing: dp(8)
-
-                    MDTextField:
-                        id: from_level
-                        hint_text: "De"
-                        mode: "rectangle"
-                        input_filter: "int"
-
-                    MDTextField:
-                        id: to_level
-                        hint_text: "Até"
-                        mode: "rectangle"
-                        input_filter: "int"
-
-                MDTextField:
-                    id: loyalty
-                    hint_text: "Loyalty (%) (0-50)"
-                    mode: "rectangle"
-                    input_filter: "float"
-                    text: "0"
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
-                    MDLabel:
-                        text: "Private dummy (+10%):"
-                        valign: "middle"
-                    MDSwitch:
-                        id: private_dummy
-                        active: False
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
-                    MDLabel:
-                        text: "Double event (x2):"
-                        valign: "middle"
-                    MDSwitch:
-                        id: double_event
-                        active: False
-
-                MDRaisedButton:
-                    text: "Calcular"
-                    on_release: app.training_calculate()
-
-                MDLabel:
-                    id: train_status
-                    text: ""
-                    size_hint_y: None
-                    height: dp(24)
-
-                MDLabel:
-                    id: train_result
-                    text: ""
-                    halign: "left"
-                    valign: "top"
-                    size_hint_y: None
-                    height: self.texture_size[1] + dp(20)
-
-
-<ImbuementsScreen@MDScreen>:
-    MDBoxLayout:
-        orientation: "vertical"
-
-        MDTopAppBar:
-            title: "Imbuements (TibiaWiki)"
-            left_action_items: [["arrow-left", lambda x: app.back_home()]]
-            right_action_items: [["refresh", lambda x: app._imbuements_load()]]
-            elevation: 2
+            title: "Treino"
+            left_action_items: [["arrow-left", lambda x: app.go("home")]]
 
         MDBoxLayout:
             orientation: "vertical"
@@ -359,20 +257,48 @@ RootSM:
             spacing: dp(10)
 
             MDTextField:
-                id: imb_search
-                hint_text: "Buscar (ex: Vampirism, Strike...)"
-                mode: "rectangle"
-                on_text: app.imbuements_refresh_list()
+                id: training_from
+                hint_text: "Skill atual"
+                input_filter: "int"
+
+            MDTextField:
+                id: training_to
+                hint_text: "Skill alvo"
+                input_filter: "int"
+
+            MDTextField:
+                id: training_ml
+                hint_text: "Magic Level atual (opcional)"
+                input_filter: "int"
+
+            MDRectangleFlatButton:
+                text: "Calcular"
+                on_release: app.compute_training()
 
             MDLabel:
-                id: imb_status
-                text: "Toque em refresh para carregar."
+                id: training_result
+                text: ""
+                halign: "left"
                 size_hint_y: None
-                height: dp(24)
+                height: self.texture_size[1]
 
-            ScrollView:
-                MDList:
-                    id: imb_list
+
+<ImbuementsScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Imbuements"
+            left_action_items: [["arrow-left", lambda x: app.go("home")]]
+
+        MDRectangleFlatButton:
+            text: "Atualizar"
+            pos_hint: {"center_x": .5}
+            on_release: app.update_imbuements()
+
+        ScrollView:
+            MDList:
+                id: imbuements_list
 
 
 <HuntScreen@MDScreen>:
@@ -381,40 +307,27 @@ RootSM:
 
         MDTopAppBar:
             title: "Hunt Analyzer"
-            left_action_items: [["arrow-left", lambda x: app.back_home()]]
-            elevation: 2
+            left_action_items: [["arrow-left", lambda x: app.go("home")]]
 
-        ScrollView:
-            MDBoxLayout:
-                orientation: "vertical"
-                padding: dp(12)
-                spacing: dp(10)
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: dp(12)
+            spacing: dp(10)
+
+            MDTextField:
+                id: hunt_text
+                hint_text: "Cole o texto do hunt (session data)"
+                multiline: True
                 size_hint_y: None
-                height: self.minimum_height
+                height: dp(180)
 
-                MDTextField:
-                    id: hunt_input
-                    hint_text: "Cole aqui o texto do Session Data (Tibia)"
-                    mode: "rectangle"
-                    multiline: True
-                    size_hint_y: None
-                    height: dp(220)
+            MDRectangleFlatButton:
+                text: "Analisar"
+                on_release: app.parse_hunt()
 
-                MDRaisedButton:
-                    text: "Analisar"
-                    on_release: app.hunt_parse()
-
-                MDLabel:
-                    id: hunt_status
-                    text: ""
-                    size_hint_y: None
-                    height: dp(24)
-
-                MDTextField:
-                    id: hunt_output
-                    hint_text: "Resultado"
-                    mode: "rectangle"
-                    multiline: True
-                    readonly: True
-                    size_hint_y: None
-                    height: dp(260)
+            MDLabel:
+                id: hunt_result
+                text: ""
+                halign: "left"
+                size_hint_y: None
+                height: self.texture_size[1]
