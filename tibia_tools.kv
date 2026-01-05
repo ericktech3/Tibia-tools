@@ -1,0 +1,127 @@
+#:import dp kivy.metrics.dp
+
+<RootWidget@MDScreen>:
+
+MDBottomNavigation:
+    panel_color: app.theme_cls.bg_normal
+
+    MDBottomNavigationItem:
+        name: "search"
+        text: "Buscar"
+        icon: "account-search"
+
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: dp(12)
+            spacing: dp(12)
+
+            MDLabel:
+                text: "Buscar personagem"
+                font_style: "H6"
+                size_hint_y: None
+                height: self.texture_size[1]
+
+            MDTextField:
+                id: char_name
+                hint_text: "Nome do personagem"
+                helper_text: "Ex: Knightmare"
+                helper_text_mode: "on_focus"
+
+            MDBoxLayout:
+                size_hint_y: None
+                height: dp(48)
+                spacing: dp(12)
+
+                MDRaisedButton:
+                    text: "Buscar"
+                    on_release: app.search_character(char_name.text)
+
+                MDFlatButton:
+                    text: "Abrir no navegador"
+                    disabled: True if app.last_character_name == "" else False
+                    on_release: app.open_last_in_browser()
+
+                MDRaisedButton:
+                    text: "Favoritar"
+                    disabled: True if app.last_character_name == "" else False
+                    on_release: app.add_last_to_favorites()
+
+            MDCard:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(8)
+                size_hint_y: None
+                height: self.minimum_height
+
+                MDLabel:
+                    text: app.result_title
+                    bold: True
+                    size_hint_y: None
+                    height: self.texture_size[1]
+
+                MDLabel:
+                    text: app.result_body
+                    size_hint_y: None
+                    height: self.texture_size[1]
+
+            MDLabel:
+                text: "Dica: na aba Favoritos, tocar em um item remove."
+                theme_text_color: "Hint"
+                size_hint_y: None
+                height: self.texture_size[1]
+
+    MDBottomNavigationItem:
+        name: "bless"
+        text: "Bless"
+        icon: "shield-plus"
+
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: dp(12)
+            spacing: dp(12)
+
+            MDLabel:
+                text: "Calculadora de Blessings (5 regulares)"
+                font_style: "H6"
+                size_hint_y: None
+                height: self.texture_size[1]
+
+            MDTextField:
+                id: bless_level
+                hint_text: "Level"
+                input_filter: "int"
+
+            MDRaisedButton:
+                text: "Calcular"
+                on_release: app.calc_blessings(bless_level.text)
+
+            MDCard:
+                orientation: "vertical"
+                padding: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                MDLabel:
+                    text: app.bless_result
+                    size_hint_y: None
+                    height: self.texture_size[1]
+
+    MDBottomNavigationItem:
+        name: "fav"
+        text: "Favoritos"
+        icon: "star"
+
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: dp(12)
+            spacing: dp(12)
+
+            MDLabel:
+                text: "Favoritos (toque para remover)"
+                font_style: "H6"
+                size_hint_y: None
+                height: self.texture_size[1]
+
+            ScrollView:
+                MDList:
+                    id: fav_list
