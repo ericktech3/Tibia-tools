@@ -1,675 +1,313 @@
-# Tibia Tools (Android) - main.py
-# Hotfix: evita "abre e fecha" no Android com:
-# - imports preguiçosos (core/Core) + tela de erro
-# - log de crash em arquivo
-# - Portrait/Vertical (via buildozer.spec)
-
 from __future__ import annotations
 
+import json
 import os
-import sys
-import time
+import threading
 import traceback
-import importlib
-from typing import Any, Dict, Optional, Tuple
+import webbrowser
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from kivy.app import App
+import certifi
+import requests
 from kivy.clock import Clock
-from kivy.core.clipboard import Clipboard
 from kivy.lang import Builder
-from kivy.properties import (
-    BooleanProperty,
-    ListProperty,
-    NumericProperty,
-    StringProperty,
-)
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.recycleview.views import RecycleDataViewBehavior
-from kivy.uix.label import Label
-from kivy.uix.button import Button
-from kivy.uix.scrollview import ScrollView
+from kivy.properties import StringProperty
+from kivymd.app import MDApp
+from kivymd.uix.dialog import MDDialog
+from kivymd.uix.list import OneLineListItem
+
+# Garante certificados HTTPS no Android (evita erro SSL silencioso)
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
 
 
-def _try_get_storage_dir() -> str:
+# -----------------------------
+# Tibia: Blessings (fórmula)
+# -----------------------------
+def blessing_price_per_bless(level: int) -> int:
     """
-    Melhor esforço para achar um diretório gravável no Android.
-    Se não der, usa o diretório atual.
+    Fórmula (5 blessings regulares):
+    - até lvl 30: 2000 gp por blessing
+    - 31..120: 2000 + 200*(lvl-30)
+    - 120+: 20000 + 75*(lvl-120)  (patch 13.14)
+    Fonte: TibiaWiki BR (patch) + cálculo rápido 30..120.
     """
-    # Android (python-for-android) geralmente tem android.storage
-    try:
-        from android.storage import app_storage_path  # type: ignore
-        p = app_storage_path()
-        if p and os.path.isdir(p):
-            return p
-    except Exception:
-        pass
+    if level <= 0:
+        return 0
+    if level <= 30:
+        return 2000
+    if level <= 120:
+        return 2000 + 200 * (level - 30)
+    return 20000 + 75 * (level - 120)
 
-    # user home / cwd
-    for p in (os.path.expanduser("~"), os.getcwd()):
+
+def blessing_total_5(level: int) -> int:
+    return blessing_price_per_bless(level) * 5
+
+
+# -----------------------------
+# TibiaData (character)
+# -----------------------------
+TIBIADATA_URL = "https://api.tibiadata.com/v4/character/{name}"
+
+
+def fetch_character_tibiadata(name: str, timeout: int = 15) -> Dict[str, Any]:
+    """
+    Estrutura típica usada por exemplos públicos:
+    data["character"]["character"]["level"], etc.
+    :contentReference[oaicite:1]{index=1}
+    """
+    safe = name.strip().replace(" ", "%20")
+    url = TIBIADATA_URL.format(name=safe)
+    r = requests.get(url, timeout=timeout)
+    r.raise_for_status()
+    data = r.json()
+
+    # Protege contra mudanças de estrutura
+    root = data.get("character", {})
+    ch = root.get("character", {}) if isinstance(root, dict) else {}
+
+    # Alguns campos podem não existir dependendo do char
+    return {
+        "name": ch.get("name", name.strip()),
+        "level": ch.get("level"),
+        "vocation": ch.get("vocation"),
+        "world": ch.get("world"),
+        "status": ch.get("status"),  # às vezes vem "online"/"offline"
+        "last_login": ch.get("last_login"),
+        "account_status": ch.get("account_status"),
+        "url": f"https://www.tibia.com/community/?name={name.strip().replace(' ', '+')}",
+        "raw": data,
+    }
+
+
+# -----------------------------
+# Persistência simples (favoritos)
+# -----------------------------
+@dataclass
+class Favorite:
+    name: str
+    world: str = ""
+    level: Optional[int] = None
+    vocation: str = ""
+    status: str = ""  # online/offline/unknown
+
+
+class State:
+    def __init__(self, base_dir: Path):
+        self.base_dir = base_dir
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.file = self.base_dir / "state.json"
+        self.favorites: List[Favorite] = []
+        self.load()
+
+    def load(self) -> None:
+        if not self.file.exists():
+            self.save()
+            return
         try:
-            os.makedirs(p, exist_ok=True)
-            test = os.path.join(p, ".writable_test")
-            with open(test, "w", encoding="utf-8") as f:
-                f.write("ok")
-            os.remove(test)
-            return p
+            obj = json.loads(self.file.read_text(encoding="utf-8"))
+            favs = obj.get("favorites", [])
+            self.favorites = [Favorite(**f) for f in favs if isinstance(f, dict)]
         except Exception:
-            continue
-    return os.getcwd()
+            # se corromper, recria
+            self.favorites = []
+            self.save()
+
+    def save(self) -> None:
+        obj = {
+            "favorites": [f.__dict__ for f in self.favorites],
+        }
+        self.file.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def upsert_favorite(self, fav: Favorite) -> None:
+        for i, f in enumerate(self.favorites):
+            if f.name.lower() == fav.name.lower():
+                self.favorites[i] = fav
+                self.save()
+                return
+        self.favorites.append(fav)
+        self.save()
+
+    def remove_favorite(self, name: str) -> None:
+        self.favorites = [f for f in self.favorites if f.name.lower() != name.lower()]
+        self.save()
 
 
-_CRASH_DIR = _try_get_storage_dir()
-_CRASH_FILE = os.path.join(_CRASH_DIR, "tibia_tools_crash.log")
+# -----------------------------
+# App
+# -----------------------------
+class TibiaToolsApp(MDApp):
+    result_title = StringProperty("Pronto.")
+    result_body = StringProperty("Digite um nome e toque em Buscar.")
+    last_character_name: str = ""
+    last_character_url: str = ""
 
-
-def _append_crash_log(text: str) -> None:
-    try:
-        os.makedirs(os.path.dirname(_CRASH_FILE), exist_ok=True)
-        with open(_CRASH_FILE, "a", encoding="utf-8") as f:
-            f.write(text)
-            if not text.endswith("\n"):
-                f.write("\n")
-    except Exception:
-        # último recurso: stderr
-        try:
-            sys.stderr.write(text + "\n")
-        except Exception:
-            pass
-
-
-def _excepthook(exctype, value, tb):
-    msg = "".join(traceback.format_exception(exctype, value, tb))
-    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    _append_crash_log(f"\n[{stamp}] Uncaught exception:\n{msg}\n")
-    # mantém comportamento padrão
-    try:
-        sys.__excepthook__(exctype, value, tb)
-    except Exception:
-        pass
-
-
-sys.excepthook = _excepthook
-
-
-def import_core_modules():
-    """
-    Importa os módulos do pacote `core` (minúsculo).
-
-    Importante: no Android/Linux o filesystem é *case-sensitive*.
-    Então 'Core' e 'core' são coisas diferentes. Padronize tudo em 'core/'.
-    """
-    try:
-        from core import state as state_mod
-        from core import tibia as tibia_mod
-        from core import utilities as util_mod
-        return tibia_mod, state_mod, util_mod
-    except ModuleNotFoundError as e:
-        raise ModuleNotFoundError(
-            "Não achei o pacote 'core'. Confirme que existe a pasta 'core/' na raiz do projeto "
-            "(tudo minúsculo) e que ela contém '__init__.py'."
-        ) from e
-
-class FavoriteRow(RecycleDataViewBehavior, BoxLayout):
-    """
-    View do RecycleView para favoritos.
-    IMPORTANTE: propriedades precisam existir para evitar crash em alguns Androids.
-    """
-    name = StringProperty("")
-    index = NumericProperty(0)
-
-
-KV = r"""
-#:import dp kivy.metrics.dp
-
-<FavoriteRow>:
-    orientation: "horizontal"
-    size_hint_y: None
-    height: dp(44)
-    padding: dp(10), dp(8)
-    spacing: dp(10)
-    canvas.before:
-        Color:
-            rgba: (0.12, 0.12, 0.14, 1) if self.index % 2 == 0 else (0.10, 0.10, 0.12, 1)
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [dp(10),]
-    Button:
-        text: root.name
-        background_normal: ""
-        background_color: (0.18, 0.47, 0.86, 1)
-        color: (1,1,1,1)
-        on_release: app.on_select_favorite(root.name)
-    Button:
-        text: "✖"
-        size_hint_x: None
-        width: dp(52)
-        background_normal: ""
-        background_color: (0.8, 0.2, 0.2, 1)
-        color: (1,1,1,1)
-        on_release: app.on_remove_favorite(root.name)
-
-<HeaderBar@BoxLayout>:
-    size_hint_y: None
-    height: dp(56)
-    padding: dp(12), dp(10)
-    spacing: dp(10)
-    canvas.before:
-        Color:
-            rgba: (0.10, 0.10, 0.12, 1)
-        Rectangle:
-            pos: self.pos
-            size: self.size
-    Label:
-        text: "Tibia Tools"
-        bold: True
-        font_size: "20sp"
-        color: (1,1,1,1)
-        size_hint_x: 1
-        halign: "left"
-        valign: "middle"
-        text_size: self.size
-    Button:
-        text: "Diagnóstico"
-        size_hint_x: None
-        width: dp(120)
-        background_normal: ""
-        background_color: (0.2, 0.6, 0.2, 1)
-        color: (1,1,1,1)
-        on_release: app.show_diagnostics()
-
-<ErrorPanel@BoxLayout>:
-    orientation: "vertical"
-    padding: dp(14)
-    spacing: dp(10)
-    canvas.before:
-        Color:
-            rgba: (0.08, 0.08, 0.10, 1)
-        Rectangle:
-            pos: self.pos
-            size: self.size
-    Label:
-        text: "Falha ao iniciar"
-        bold: True
-        font_size: "20sp"
-        color: (1,1,1,1)
-        size_hint_y: None
-        height: dp(34)
-    ScrollView:
-        do_scroll_x: False
-        Label:
-            id: err_text
-            text: ""
-            color: (1,1,1,1)
-            text_size: self.width, None
-            size_hint_y: None
-            height: self.texture_size[1] + dp(20)
-    BoxLayout:
-        size_hint_y: None
-        height: dp(44)
-        spacing: dp(10)
-        Button:
-            text: "Copiar erro"
-            background_normal: ""
-            background_color: (0.5, 0.5, 0.5, 1)
-            on_release: app.copy_error()
-        Button:
-            text: "Ver arquivo log"
-            background_normal: ""
-            background_color: (0.2, 0.4, 0.7, 1)
-            on_release: app.copy_log_path()
-
-<MainPanel@BoxLayout>:
-    orientation: "vertical"
-
-    HeaderBar:
-
-    BoxLayout:
-        orientation: "vertical"
-        padding: dp(14)
-        spacing: dp(10)
-
-        Label:
-            text: "Personagem"
-            bold: True
-            font_size: "18sp"
-            size_hint_y: None
-            height: dp(28)
-            halign: "left"
-            valign: "middle"
-            text_size: self.size
-
-        BoxLayout:
-            size_hint_y: None
-            height: dp(44)
-            spacing: dp(10)
-
-            TextInput:
-                id: char_input
-                hint_text: "Nome do personagem"
-                multiline: False
-
-            Button:
-                text: "Buscar"
-                size_hint_x: None
-                width: dp(110)
-                background_normal: ""
-                background_color: (0.18, 0.47, 0.86, 1)
-                color: (1,1,1,1)
-                on_release: app.on_search_char()
-
-        BoxLayout:
-            size_hint_y: None
-            height: dp(44)
-            spacing: dp(10)
-
-            Button:
-                text: "Adicionar aos favoritos"
-                background_normal: ""
-                background_color: (0.35, 0.35, 0.35, 1)
-                color: (1,1,1,1)
-                on_release: app.on_add_favorite()
-
-            ToggleButton:
-                id: monitor_btn
-                text: "Monitor: OFF"
-                background_normal: ""
-                background_color: (0.2, 0.2, 0.2, 1)
-                on_state: app.set_monitor(self.state == "down")
-
-        Label:
-            id: status_lbl
-            text: ""
-            color: (0.9,0.9,0.9,1)
-            size_hint_y: None
-            height: self.texture_size[1] + dp(10)
-
-        Label:
-            text: "Favoritos (máx. 10)"
-            bold: True
-            font_size: "18sp"
-            size_hint_y: None
-            height: dp(28)
-            halign: "left"
-            valign: "middle"
-            text_size: self.size
-
-        RecycleView:
-            id: fav_rv
-            viewclass: "FavoriteRow"
-            scroll_type: ["bars", "content"]
-            bar_width: dp(6)
-            do_scroll_x: False
-            RecycleBoxLayout:
-                default_size: None, dp(44)
-                default_size_hint: 1, None
-                size_hint_y: None
-                height: self.minimum_height
-                orientation: "vertical"
-
-        Label:
-            text: "Utilidades"
-            bold: True
-            font_size: "18sp"
-            size_hint_y: None
-            height: dp(28)
-            halign: "left"
-            valign: "middle"
-            text_size: self.size
-
-        BoxLayout:
-            size_hint_y: None
-            height: dp(44)
-            spacing: dp(10)
-            Button:
-                text: "Calcular Bless"
-                background_normal: ""
-                background_color: (0.5, 0.5, 0.5, 1)
-                on_release: app.on_bless_calc()
-            Button:
-                text: "Calcular Stamina"
-                background_normal: ""
-                background_color: (0.5, 0.5, 0.5, 1)
-                on_release: app.on_stamina_calc()
-            Button:
-                text: "Rashid/SS"
-                background_normal: ""
-                background_color: (0.5, 0.5, 0.5, 1)
-                on_release: app.update_rashid_and_ss()
-
-        ScrollView:
-            do_scroll_x: False
-            Label:
-                id: out_text
-                text: ""
-                color: (1,1,1,1)
-                text_size: self.width, None
-                size_hint_y: None
-                height: self.texture_size[1] + dp(20)
-
-BoxLayout:
-    id: root_box
-    orientation: "vertical"
-"""
-
-
-class TibiaToolsApp(App):
-    favorites = ListProperty([])
-    monitoring = BooleanProperty(False)
-    status_text = StringProperty("")
-    last_error = StringProperty("")
-    interval_seconds = NumericProperty(60)
-
-    # Bless config
-    bless_cfg_threshold = NumericProperty(120)
-    bless_cfg_regular_base = NumericProperty(20000)
-    bless_cfg_regular_step = NumericProperty(75)
-    bless_cfg_enhanced_base = NumericProperty(26000)
-    bless_cfg_enhanced_step = NumericProperty(100)
+    bless_result = StringProperty("")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._core_state = None
-        self._core_tibia = None
-        self._core_util = None
-        self._prefix = None
-        self._root = None
-        self._main_panel = None
-        self._error_panel = None
+        self.dialog: Optional[MDDialog] = None
+        self.state: Optional[State] = None
 
     def build(self):
-        # Construir UI base SEM depender do core.*
-        root = Builder.load_string(KV)
-        self._root = root
+        self.title = "Tibia Tools"
+        self.theme_cls.primary_palette = "Blue"
+        self.theme_cls.theme_style = "Dark"
 
-        # tenta importar core depois da UI estar de pé
+        # Carrega KV
+        Builder.load_file("tibia_tools.kv")
+
+        # user_data_dir é o lugar certo no Android (sem permissão extra)
+        self.state = State(Path(self.user_data_dir))
+        root = Builder.load_string("RootWidget:\n")  # placeholder (Root real vem do kv)
+        return Builder.load_file("tibia_tools.kv")
+
+    # ---------- UI helpers ----------
+    def show_error(self, title: str, msg: str) -> None:
+        if self.dialog:
+            self.dialog.dismiss()
+        self.dialog = MDDialog(title=title, text=msg, buttons=[])
+        self.dialog.open()
+
+    def safe_set_result(self, title: str, body: str) -> None:
+        self.result_title = title
+        self.result_body = body
+
+    # ---------- Actions ----------
+    def search_character(self, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            self.show_error("Erro", "Digite o nome do personagem.")
+            return
+
+        self.safe_set_result("Buscando...", "Aguarde.")
+        self.last_character_name = ""
+        self.last_character_url = ""
+
+        def worker():
+            try:
+                info = fetch_character_tibiadata(name)
+                # Monta texto
+                level = info.get("level")
+                world = info.get("world") or ""
+                voc = info.get("vocation") or ""
+                status = info.get("status") or "unknown"
+                last_login = info.get("last_login") or ""
+                acc = info.get("account_status") or ""
+
+                title = info.get("name", name)
+                body_lines = [
+                    f"World: {world}",
+                    f"Level: {level}",
+                    f"Vocation: {voc}",
+                    f"Status: {status}",
+                ]
+                if last_login:
+                    body_lines.append(f"Last login: {last_login}")
+                if acc:
+                    body_lines.append(f"Account: {acc}")
+
+                url = info.get("url", "")
+                def ui(_dt):
+                    self.last_character_name = title
+                    self.last_character_url = url
+                    self.safe_set_result(title, "\n".join(body_lines))
+                Clock.schedule_once(ui, 0)
+
+            except Exception as e:
+                tb = traceback.format_exc()
+                def ui(_dt):
+                    self.safe_set_result("Falha", "Não foi possível buscar o personagem.")
+                    self.show_error("Erro na busca", f"{e}\n\nDetalhes:\n{tb}")
+                Clock.schedule_once(ui, 0)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def open_last_in_browser(self) -> None:
+        if self.last_character_url:
+            webbrowser.open(self.last_character_url)
+
+    def add_last_to_favorites(self) -> None:
+        if not self.state or not self.last_character_name:
+            return
+
+        # tenta extrair alguns campos do texto atual
+        world = ""
+        level = None
+        voc = ""
+        status = ""
         try:
-            st_mod, tb_mod, util_mod, prefix = import_core_modules()
-            self._core_state, self._core_tibia, self._core_util, self._prefix = st_mod, tb_mod, util_mod, prefix
-        except BaseException as e:
-            msg = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            self._show_fatal_error("Falha ao importar módulos do projeto (core/Core).", msg)
-            return root
-
-        # inicializa dados persistidos
-        try:
-            st = self._core_state.load_state(self.user_data_dir)
-            self.favorites = st.get("favorites", [])
-            self.interval_seconds = int(st.get("interval_seconds", 60))
-            self.monitoring = bool(st.get("monitoring", False))
-            cfg = st.get("bless_cfg", {})
-            self.bless_cfg_threshold = int(cfg.get("threshold_level", 120))
-            self.bless_cfg_regular_base = int(cfg.get("regular_base", 20000))
-            self.bless_cfg_regular_step = int(cfg.get("regular_step", 75))
-            self.bless_cfg_enhanced_base = int(cfg.get("enhanced_base", 26000))
-            self.bless_cfg_enhanced_step = int(cfg.get("enhanced_step", 100))
-        except BaseException as e:
-            msg = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            self._show_fatal_error("Falha ao ler o estado/salvos.", msg)
-            return root
-
-        Clock.schedule_once(lambda *_: self._refresh_list(), 0)
-        Clock.schedule_interval(lambda dt: self._tick_monitor(dt), 2.5)
-        Clock.schedule_interval(lambda dt: self._tick_rashid(dt), 1.0)
-        Clock.schedule_once(lambda *_: self.update_rashid_and_ss(), 0)
-        Clock.schedule_once(lambda *_: self._update_monitor_button(), 0)
-
-        # pedir permissão de notificação (Android 13+)
-        try:
-            if sys.platform == "android":
-                from android.permissions import request_permissions, Permission  # type: ignore
-                request_permissions([Permission.POST_NOTIFICATIONS])
+            for line in self.result_body.splitlines():
+                if line.lower().startswith("world:"):
+                    world = line.split(":", 1)[1].strip()
+                elif line.lower().startswith("level:"):
+                    v = line.split(":", 1)[1].strip()
+                    level = int(v) if v.isdigit() else None
+                elif line.lower().startswith("vocation:"):
+                    voc = line.split(":", 1)[1].strip()
+                elif line.lower().startswith("status:"):
+                    status = line.split(":", 1)[1].strip()
         except Exception:
             pass
 
-        # outputs iniciais
-        self.status_text = "Pronto."
-        self._set_status(self.status_text)
-        self.on_bless_calc()
-        self.on_stamina_calc()
-        return root
+        self.state.upsert_favorite(Favorite(
+            name=self.last_character_name,
+            world=world,
+            level=level,
+            vocation=voc,
+            status=status,
+        ))
+        self.refresh_favorites_list()
 
-    # ----------------------------
-    # UI helpers
-    # ----------------------------
-    def _find(self, wid: str):
-        if not self._root:
-            return None
-        try:
-            return self._root.ids.get(wid)
-        except Exception:
-            return None
-
-    def _set_status(self, text: str):
-        self.status_text = text
-        lbl = self._find("status_lbl")
-        if lbl is not None:
-            lbl.text = text
-
-    def _append_output(self, text: str):
-        out = self._find("out_text")
-        if out is not None:
-            out.text = text
-
-    def _update_monitor_button(self):
-        btn = self._find("monitor_btn")
-        if btn is not None:
-            btn.text = "Monitor: ON" if self.monitoring else "Monitor: OFF"
-            btn.state = "down" if self.monitoring else "normal"
-
-    def _show_fatal_error(self, title: str, details: str):
-        full = f"{title}\n\n{details}\n\nLog: {_CRASH_FILE}"
-        self.last_error = full
-        _append_crash_log(full)
-        # troca UI para painel de erro
-        root_box = self._find("root_box")
-        if root_box is None:
+    def remove_favorite(self, name: str) -> None:
+        if not self.state:
             return
-        root_box.clear_widgets()
+        self.state.remove_favorite(name)
+        self.refresh_favorites_list()
 
-        panel = Builder.load_string("ErrorPanel:")
-        self._error_panel = panel
-        # set text
-        try:
-            panel.ids.err_text.text = full
-        except Exception:
-            pass
-        root_box.add_widget(panel)
+    def refresh_favorites_list(self) -> None:
+        if not self.state:
+            return
+        root = self.root
+        fav_list = root.ids.get("fav_list")
+        if not fav_list:
+            return
 
-    def show_diagnostics(self):
-        info = [
-            f"package: {self.__class__.__name__}",
-            f"user_data_dir: {self.user_data_dir}",
-            f"crash_log: {_CRASH_FILE}",
-            f"core_prefix: {self._prefix}",
-            f"favorites: {len(self.favorites)}",
-            f"monitoring: {self.monitoring} (interval={self.interval_seconds}s)",
-        ]
-        self._append_output("DIAGNÓSTICO\n" + "\n".join(info))
+        fav_list.clear_widgets()
+        if not self.state.favorites:
+            fav_list.add_widget(OneLineListItem(text="Nenhum favorito ainda."))
+            return
 
-    def copy_error(self):
-        if self.last_error:
-            Clipboard.copy(self.last_error)
-
-    def copy_log_path(self):
-        Clipboard.copy(_CRASH_FILE)
-        self._append_output(f"Caminho do log copiado:\n{_CRASH_FILE}")
-
-    # ----------------------------
-    # Favorites
-    # ----------------------------
-    def _save_state(self):
-        try:
-            self._core_state.save_state(
-                self.user_data_dir,
-                {
-                    "favorites": list(self.favorites),
-                    "interval_seconds": int(self.interval_seconds),
-                    "monitoring": bool(self.monitoring),
-                    "bless_cfg": {
-                        "threshold_level": int(self.bless_cfg_threshold),
-                        "regular_base": int(self.bless_cfg_regular_base),
-                        "regular_step": int(self.bless_cfg_regular_step),
-                        "enhanced_base": int(self.bless_cfg_enhanced_base),
-                        "enhanced_step": int(self.bless_cfg_enhanced_step),
-                    },
-                },
+        for fav in self.state.favorites:
+            item = OneLineListItem(
+                text=f"{fav.name}  ({fav.world})  Lvl {fav.level or '?'}  [{fav.status or 'unknown'}]"
             )
-        except Exception as e:
-            self._set_status(f"Falha ao salvar estado: {e}")
+            # clique = remover (simples e impossível de errar)
+            item.on_release = lambda n=fav.name: self.remove_favorite(n)
+            fav_list.add_widget(item)
 
-    def _refresh_list(self):
-        rv = self._find("fav_rv")
-        if rv is not None:
-            rv.data = [{"name": n, "index": i} for i, n in enumerate(self.favorites)]
-
-    def on_select_favorite(self, name: str):
-        ti = self._find("char_input")
-        if ti is not None:
-            ti.text = name
-        self._set_status(f"Selecionado: {name}")
-
-    def on_remove_favorite(self, name: str):
-        if name in self.favorites:
-            self.favorites.remove(name)
-            self._save_state()
-            self._refresh_list()
-            self._set_status(f"Removido dos favoritos: {name}")
-
-    def on_add_favorite(self):
-        ti = self._find("char_input")
-        if ti is None:
+    def calc_blessings(self, level_text: str) -> None:
+        level_text = (level_text or "").strip()
+        if not level_text.isdigit():
+            self.bless_result = "Digite um level válido (número)."
             return
-        name = ti.text.strip()
-        if not name:
-            self._set_status("Digite um nome para favoritar.")
-            return
-        if name in self.favorites:
-            self._set_status("Já está nos favoritos.")
-            return
-        if len(self.favorites) >= 10:
-            self._set_status("Limite de 10 favoritos.")
-            return
-        self.favorites.append(name)
-        self._save_state()
-        self._refresh_list()
-        self._set_status(f"Favoritado: {name}")
+        lvl = int(level_text)
+        per = blessing_price_per_bless(lvl)
+        total = blessing_total_5(lvl)
+        # fórmula rápida 30..120: total = (lvl-20)*1000, bate com a wiki
+        # 
+        self.bless_result = (
+            f"Level {lvl}\n"
+            f"Preço por bênção: {per:,} gp\n"
+            f"Total (5 bênçãos): {total:,} gp"
+        ).replace(",", ".")
 
-    def set_monitor(self, enabled: bool):
-        self.monitoring = bool(enabled)
-        self._update_monitor_button()
-        self._save_state()
-        self._set_status("Monitor ligado." if self.monitoring else "Monitor desligado.")
-
-    # ----------------------------
-    # Char search
-    # ----------------------------
-    def on_search_char(self):
-        ti = self._find("char_input")
-        if ti is None:
-            return
-        name = ti.text.strip()
-        if not name:
-            self._set_status("Digite o nome do personagem.")
-            return
-        try:
-            snap = self._core_tibia.fetch_character_snapshot(name)
-            lines = []
-            if snap.get("error"):
-                lines.append(f"ERRO: {snap['error']}")
-            else:
-                lines.append(f"Nome: {snap.get('name','-')}")
-                lines.append(f"Mundo: {snap.get('world','-')}")
-                lines.append(f"Level: {snap.get('level','-')}  Voc: {snap.get('vocation','-')}")
-                lines.append(f"Status: {'online' if snap.get('online') else 'offline'}")
-                if snap.get("last_login"):
-                    lines.append(f"Last login: {snap.get('last_login')}")
-            self._append_output("\n".join(lines))
-            self._set_status("Busca OK.")
-        except Exception as e:
-            msg = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            _append_crash_log(msg)
-            self._set_status(f"Falha na busca: {e}")
-
-    # ----------------------------
-    # Monitor (notificações via serviço)
-    # ----------------------------
-    def _tick_monitor(self, dt):
-        # este app controla estado; serviço faz o monitoramento real.
-        if not self.monitoring:
-            return
-        # Só atualiza texto (mínimo). Você pode iniciar o serviço aqui quando quiser.
-        self._set_status(f"Monitor: ON (intervalo {int(self.interval_seconds)}s)")
-
-    # ----------------------------
-    # Utilities
-    # ----------------------------
-    def on_bless_calc(self):
-        """
-        Calcula custo estimado das blessings (modelo simples ajustável).
-        """
-        # nível do campo atual (se for número), senão usa 120
-        lvl = 120
-        ti = self._find("char_input")
-        if ti is not None:
-            txt = ti.text.strip()
-            # permite "120" como input rápido
-            if txt.isdigit():
-                lvl = int(txt)
-
-        try:
-            calc = self._core_util.calc_bless_cost(
-                level=lvl,
-                threshold_level=int(self.bless_cfg_threshold),
-                regular_base=int(self.bless_cfg_regular_base),
-                regular_step=int(self.bless_cfg_regular_step),
-                enhanced_base=int(self.bless_cfg_enhanced_base),
-                enhanced_step=int(self.bless_cfg_enhanced_step),
-            )
-            self._append_output(
-                "BLESS\n"
-                f"Level: {lvl}\n"
-                f"Regular (5): {calc['regular_5']:,}\n"
-                f"Enhanced (2): {calc['enhanced_2']:,}\n"
-                f"Total (7): {calc['total_7']:,}\n"
-            )
-        except Exception as e:
-            self._append_output(f"BLESS: erro: {e}")
-
-    def on_stamina_calc(self):
-        """
-        Stamina: input "HH:MM" no campo do personagem, ex: 38:45
-        """
-        ti = self._find("char_input")
-        if ti is None:
-            return
-        txt = ti.text.strip()
-        try:
-            h, m = txt.split(":")
-            cur = int(h) * 60 + int(m)
-            need = self._core_util.minutes_to_full_stamina(cur)
-            self._append_output(
-                "STAMINA\n"
-                f"Atual: {txt}\n"
-                f"Falta offline: {need//60}h {need%60:02d}m para 42:00\n"
-            )
-        except Exception:
-            self._append_output("STAMINA\nDigite no campo: HH:MM (ex: 38:45) para calcular.")
-
-    def _tick_rashid(self, dt):
-        # atualiza rótulo de status periodicamente (sem spam)
-        pass
-
-    def update_rashid_and_ss(self):
-        try:
-            info = self._core_util.rashid_and_serversave_info()
-            self._append_output(
-                "RASHID / SERVER SAVE\n"
-                f"Rashid hoje: {info['rashid_city']}\n"
-                f"Server Save (CET/CEST): {info['serversave_eta']}\n"
-            )
-        except Exception as e:
-            self._append_output(f"RASHID: erro: {e}")
+    def on_start(self):
+        # preenche lista ao abrir
+        Clock.schedule_once(lambda _dt: self.refresh_favorites_list(), 0)
 
 
 if __name__ == "__main__":
