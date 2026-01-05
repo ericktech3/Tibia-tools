@@ -7,62 +7,146 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+
+    env:
+      ANDROID_SDK_ROOT: /home/runner/android-sdk
+      ANDROID_HOME: /home/runner/android-sdk
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 \
-            cmake libffi-dev libssl-dev
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git zip unzip curl \
+            autoconf automake libtool pkg-config \
+            libffi-dev libssl-dev \
+            zlib1g-dev libbz2-dev liblzma-dev \
+            libsqlite3-dev \
+            libncurses6 libncursesw6 libtinfo6 \
+            cmake
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install Android commandline-tools (sdkmanager)
+        run: |
+          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"
+          cd /tmp
 
-      - name: Accept Android licenses + install SDK packages
+          curl -fsSLo cmdline-tools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+
+          unzip -q cmdline-tools.zip
+
+          rm -rf "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
+          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
+          mv cmdline-tools/* "${ANDROID_SDK_ROOT}/cmdline-tools/latest/"
+
+          echo "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "${ANDROID_SDK_ROOT}/platform-tools" >> "$GITHUB_PATH"
+
+          sdkmanager --version
+
+      - name: Accept licenses + install required SDK packages (AIDL)
         shell: bash
         run: |
-          # Evita falha por "Broken pipe" do `yes` com pipefail
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          set -o pipefail
+          set -euxo pipefail
 
-          sdkmanager "platform-tools" "build-tools;36.1.0" "platforms;android-34"
+          # Evita prompt interativo de licença (às vezes dá "Broken pipe": ignoramos)
+          yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses || true
+
+          # Instala o essencial para o Buildozer/p4a (inclui AIDL dentro do build-tools)
+          sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;36.1.0" \
+            "build-tools;33.0.2"
+
+          echo "Verificando AIDL..."
+          test -f "${ANDROID_SDK_ROOT}/build-tools/36.1.0/aidl"
+          "${ANDROID_SDK_ROOT}/build-tools/36.1.0/aidl" --version || true
+
+      - name: Fix buildozer.spec formatting (important)
+        run: |
+          # Se o buildozer.spec estiver “colado”, o Buildozer ignora as configs.
+          # Aqui a gente garante um arquivo válido, com as opções de SDK/licença.
+          cat > buildozer.spec <<'EOF'
+          [app]
+          title = Tibia Tools
+          package.name = tibiatools
+          package.domain = org.erick
+
+          source.dir = .
+          source.include_exts = py,png,jpg,jpeg,kv,atlas,json,txt,ttf,otf,db
+
+          version = 0.2.0
+          requirements = python3,kivy,requests,certifi,plyer
+
+          orientation = portrait
+          fullscreen = 0
+
+          # Se você usa service no projeto, descomente e ajuste:
+          # services = Watcher:service/main.py:foreground
+
+          [buildozer]
+          log_level = 2
+          warn_on_root = 1
+
+          [android]
+          android.api = 33
+          android.minapi = 24
+          android.ndk_api = 24
+          android.archs = arm64-v8a,armeabi-v7a
+
+          android.permissions = INTERNET
+
+          # MUITO IMPORTANTE no GitHub Actions:
+          android.sdk_path = /home/runner/android-sdk
+          android.skip_update = True
+          android.accept_sdk_license = True
+
+          # AndroidX
+          android.enable_androidx = True
+          EOF
+
+          echo "===== buildozer.spec ====="
+          sed -n '1,200p' buildozer.spec
 
       - name: Install Buildozer
         run: |
-          python -m pip install --upgrade pip
-          pip install buildozer==1.5.0 Cython==0.29.36
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
+
+      - name: Python sanity (only your code)
+        run: |
+          python -m compileall -q .
 
       - name: Build APK (debug)
-        env:
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROIDSDK: /usr/local/lib/android/sdk
+        shell: bash
         run: |
+          # garante que o arquivo exista mesmo se der erro antes do fim
+          : > buildozer.log
           buildozer -v android debug 2>&1 | tee buildozer.log
 
-      - name: Upload artifacts
+      - name: Upload APK artifact + logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-output
           path: |
             bin/*.apk
+            bin/*.aab
             buildozer.log
+          if-no-files-found: warn
