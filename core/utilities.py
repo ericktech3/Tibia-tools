@@ -153,3 +153,51 @@ def blessings_cost(
         config=config,
     )
     return int(data["total"])
+
+
+def calc_blessings_cost(level: int, pvp: bool = True) -> int:
+    """Compatibilidade com a UI.
+
+    A UI do Android/Windows antiga chama `calc_blessings_cost(level, pvp=...)`.
+    O parâmetro `pvp` é mantido apenas para evitar crash (o custo de compra das
+    blessings não depende diretamente do tipo de PvP).
+
+    Retorna o custo total das 5 blessings regulares (sem Inquisition por padrão).
+    """
+
+    _ = pvp  # compat: atualmente não altera o cálculo
+    return blessings_cost(level=level, regular_count=5, enhanced_count=0, inq_discount=False)
+
+
+def stamina_to_full(current_stamina: str | float, max_hours: int = 42) -> float:
+    """Compatibilidade: calcula quantas horas faltam para chegar ao máximo.
+
+    Observação: o cálculo de regen de stamina no Tibia é mais complexo (e varia
+    conforme o intervalo). Como, no Android, essa função é usada apenas para
+    exibir uma estimativa básica, aqui retornamos **apenas a diferença** até o
+    máximo.
+
+    Args:
+        current_stamina: pode ser float (ex.: 37.5) ou string "HH:MM".
+        max_hours: limite superior de stamina em horas (padrão 42).
+
+    Returns:
+        Horas restantes (float), nunca menor que 0.
+    """
+
+    if isinstance(current_stamina, str):
+        s = current_stamina.strip()
+        if ":" in s:
+            hh, mm = s.split(":", 1)
+            try:
+                current = float(int(hh)) + (float(int(mm)) / 60.0)
+            except ValueError:
+                # fallback: tenta converter direto
+                current = float(s)
+        else:
+            current = float(s)
+    else:
+        current = float(current_stamina)
+
+    remaining = float(max_hours) - current
+    return remaining if remaining > 0 else 0.0
