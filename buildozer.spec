@@ -5,8 +5,8 @@ package.domain = org.erick
 source.dir = .
 source.include_exts = py,kv,json,png,jpg,ttf
 
-version = 0.2.0
-requirements = python3,kivy,requests,pillow,certifi
+version = 0.2.1
+requirements = python3,kivy,kivymd,requests,pillow,certifi
 
 orientation = portrait
 fullscreen = 1
