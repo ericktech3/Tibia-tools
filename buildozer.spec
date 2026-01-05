@@ -2,27 +2,23 @@
 title = Tibia Tools
 package.name = tibiatools
 package.domain = org.erick
+
 source.dir = .
-source.include_exts = py,kv,json,png,jpg,ttf
+source.include_exts = py,kv,png,jpg,jpeg,txt,json,ttf,atlas
 
-version = 0.2.1
-requirements = python3,kivy,kivymd,requests,pillow,certifi
+version = 0.1.0
 
-orientation = portrait
-fullscreen = 1
+requirements = python3,kivy,kivymd,requests,certifi
 
-android.permissions = INTERNET,ACCESS_NETWORK_STATE,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
-android.api = 34
+# Android
+android.permissions = INTERNET
+android.api = 33
 android.minapi = 21
+android.ndk = 25b
 android.archs = arm64-v8a,armeabi-v7a
 
-# MUITO IMPORTANTE no CI: força o Buildozer a usar o SDK do runner
-android.sdk_path = /usr/local/lib/android/sdk
-
-# Opcional, mas ajuda a não “interagir” com licença no CI
+# evita prompt de licença no CI (importante!)
 android.accept_sdk_license = True
-android.skip_update = True
 
-[buildozer]
+# (opcional) melhora logs em debug
 log_level = 2
-warn_on_root = 1
