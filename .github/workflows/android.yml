@@ -33,120 +33,112 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential git zip unzip curl \
-            autoconf automake libtool pkg-config \
-            libffi-dev libssl-dev \
-            zlib1g-dev libbz2-dev liblzma-dev \
-            libsqlite3-dev \
-            libncurses6 libncursesw6 libtinfo6 \
-            cmake
+            autoconf automake libtool pkg-config cmake \
+            libffi-dev libssl-dev zlib1g-dev liblzma-dev \
+            libsqlite3-dev libgdbm-dev libreadline-dev libbz2-dev \
+            libncurses5-dev libncursesw5-dev libtinfo6 \
+            libjpeg-dev libpng-dev
+          sudo apt-get clean
 
       - name: Install Android commandline-tools (sdkmanager)
         run: |
-          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
           cd /tmp
 
-          curl -fsSLo cmdline-tools.zip \
-            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          # Command line tools (zip oficial do Google)
+          curl -sSLo cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
 
+          rm -rf cmdline-tools
           unzip -q cmdline-tools.zip
 
-          rm -rf "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
-          mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools/latest"
-          mv cmdline-tools/* "${ANDROID_SDK_ROOT}/cmdline-tools/latest/"
+          rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mv cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
 
-          echo "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "${ANDROID_SDK_ROOT}/platform-tools" >> "$GITHUB_PATH"
+          # PATH para ESTE step + próximos steps
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
           sdkmanager --version
 
       - name: Accept licenses + install required SDK packages (AIDL)
-        shell: bash
         run: |
-          set -euxo pipefail
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
-          # Evita prompt interativo de licença (às vezes dá "Broken pipe": ignoramos)
-          yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses || true
+          # NÃO use "set -o pipefail" aqui — evita quebrar o "yes | ..."
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
 
-          # Instala o essencial para o Buildozer/p4a (inclui AIDL dentro do build-tools)
-          sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" \
+          # Instala o necessário (AIDL fica dentro do build-tools)
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
             "platform-tools" \
             "platforms;android-33" \
-            "build-tools;36.1.0" \
             "build-tools;33.0.2"
 
-          echo "Verificando AIDL..."
-          test -f "${ANDROID_SDK_ROOT}/build-tools/36.1.0/aidl"
-          "${ANDROID_SDK_ROOT}/build-tools/36.1.0/aidl" --version || true
-
-      - name: Fix buildozer.spec formatting (important)
+      - name: Fix buildozer.spec (CRLF + força usar ANDROID_SDK_ROOT)
         run: |
-          # Se o buildozer.spec estiver “colado”, o Buildozer ignora as configs.
-          # Aqui a gente garante um arquivo válido, com as opções de SDK/licença.
-          cat > buildozer.spec <<'EOF'
-          [app]
-          title = Tibia Tools
-          package.name = tibiatools
-          package.domain = org.erick
+          python - <<'PY'
+          from pathlib import Path
+          import re
 
-          source.dir = .
-          source.include_exts = py,png,jpg,jpeg,kv,atlas,json,txt,ttf,otf,db
+          p = Path("buildozer.spec")
+          if not p.exists():
+              raise SystemExit("buildozer.spec não encontrado na raiz do repositório.")
 
-          version = 0.2.0
-          requirements = python3,kivy,requests,certifi,plyer
+          text = p.read_text(encoding="utf-8", errors="ignore")
+          text = text.replace("\r\n", "\n").replace("\r", "\n")  # CRLF -> LF
 
-          orientation = portrait
-          fullscreen = 0
+          def set_key(section, key, value, text):
+              sec_pat = re.compile(rf"(?ms)^\[{re.escape(section)}\]\n(.*?)(?=^\[|\Z)")
+              m = sec_pat.search(text)
+              if not m:
+                  text = f"[{section}]\n\n" + text
+                  m = sec_pat.search(text)
 
-          # Se você usa service no projeto, descomente e ajuste:
-          # services = Watcher:service/main.py:foreground
+              body = m.group(1)
+              key_pat = re.compile(rf"(?m)^{re.escape(key)}\s*=.*$")
+              if key_pat.search(body):
+                  body2 = key_pat.sub(f"{key} = {value}", body)
+              else:
+                  body2 = body + f"\n{key} = {value}\n"
 
-          [buildozer]
-          log_level = 2
-          warn_on_root = 1
+              new_block = f"[{section}]\n" + body2
+              return text[:m.start()] + new_block + text[m.end():]
 
-          [android]
-          android.api = 33
-          android.minapi = 24
-          android.ndk_api = 24
-          android.archs = arm64-v8a,armeabi-v7a
+          sdk_root = "/home/runner/android-sdk"
+          text = set_key("app", "android.sdk_path", sdk_root, text)
+          text = set_key("app", "android.skip_update", "True", text)
 
-          android.permissions = INTERNET
-
-          # MUITO IMPORTANTE no GitHub Actions:
-          android.sdk_path = /home/runner/android-sdk
-          android.skip_update = True
-          android.accept_sdk_license = True
-
-          # AndroidX
-          android.enable_androidx = True
-          EOF
-
-          echo "===== buildozer.spec ====="
-          sed -n '1,200p' buildozer.spec
+          p.write_text(text.strip() + "\n", encoding="utf-8")
+          print("buildozer.spec ajustado (LF + android.sdk_path + android.skip_update).")
+          PY
 
       - name: Install Buildozer
         run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "Cython==0.29.36" "buildozer==1.5.0"
-
-      - name: Python sanity (only your code)
-        run: |
-          python -m compileall -q .
+          python -m pip install --upgrade pip wheel setuptools
+          python -m pip install --upgrade buildozer Cython==0.29.36
 
       - name: Build APK (debug)
-        shell: bash
         run: |
-          # garante que o arquivo exista mesmo se der erro antes do fim
-          : > buildozer.log
-          buildozer -v android debug 2>&1 | tee buildozer.log
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          buildozer -v android debug
 
-      - name: Upload APK artifact + logs
-        if: always()
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-output
+          name: apk-debug
           path: |
             bin/*.apk
             bin/*.aab
-            buildozer.log
-          if-no-files-found: warn
+          if-no-files-found: error
+
+      - name: Upload build logs (se existir)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-logs
+          path: |
+            .buildozer/*.log
+            .buildozer/android/platform/python-for-android/**/*.log
+            .buildozer/android/platform/python-for-android/**/build.log
+          if-no-files-found: ignore
