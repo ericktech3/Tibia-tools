@@ -132,33 +132,30 @@ class TibiaToolsApp(MDApp):
                 data = fetch_character_tibiadata(name)
                 if not data:
                     raise ValueError("Sem resposta da API.")
-
-                # TibiaData v4 commonly returns:
-                # {"character": {"character": {...}, "deaths": [...], ...}, "information": {...}}
-                c = {}
-                try:
-                    c = data.get("character", {})
-                    if isinstance(c, dict) and "character" in c and isinstance(c.get("character"), dict):
-                        c = c["character"]
-                except Exception:
-                    c = {}
-
+                character = data.get("character", {})
                 url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
-                status = c.get("status", "N/A")
-                voc = c.get("vocation", "N/A")
-                level = c.get("level", "N/A")
-                world = c.get("world", "N/A")
+                status = character.get("status", "N/A")
+                voc = character.get("vocation", "N/A")
+                level = character.get("level", "N/A")
+                world = character.get("world", "N/A")
                 result = f"Status: {status}\nVocation: {voc}\nLevel: {level}\nWorld: {world}"
                 return True, result, url
             except Exception as e:
                 return False, f"Erro: {e}", ""
 
         def done(res):
-            ok, text, url = res
-            home.ids.char_status.text = text
-            home.char_last_url = url
-            if ok:
-                Snackbar(text="Char encontrado.").open()
+            try:
+                ok, text, url = res
+                home.ids.char_status.text = str(text)
+                home.char_last_url = url
+                if ok:
+                    Snackbar(text="Char encontrado.").open()
+            except Exception as e:
+                # Prevent hard-crash on UI callback
+                try:
+                    home.ids.char_status.text = f"Erro interno: {e}"
+                except Exception:
+                    pass
 
         def run():
             res = worker()
