@@ -1,51 +1,34 @@
-"""HTTP helpers + aliases de compatibilidade.
+"""API helpers used by the UI.
 
-Motivo: em algumas refatorações, os nomes das funções mudaram.
-No Android, um `ImportError` na inicialização faz o app abrir e fechar.
-
-A UI atual (main.py) usa:
-- fetch_character_tibiadata
-- fetch_worlds_tibiadata
-
-Este módulo garante esses nomes (e também expõe os nomes "novos").
+Important: Keep these functions *robust* on Android (never crash the UI thread).
 """
 
-from __future__ import annotations
-
-from typing import Dict
+from typing import Any, Dict, List
+from urllib.parse import quote
 
 import requests
 
-from .tibia import fetch_character_snapshot as _fetch_character_snapshot
-
-WORLDS_URL = "https://api.tibiadata.com/v4/worlds"
+from .tibia import fetch_character_full
 
 
-def fetch_worlds(timeout: int = 10) -> Dict:
-    """Lista de mundos via TibiaData."""
-    r = requests.get(WORLDS_URL, timeout=timeout)
+API_BASE = "https://api.tibiadata.com/v4"
+
+
+def fetch_character_tibiadata(name: str, timeout: int = 20) -> Dict[str, Any]:
+    """Return the *full* TibiaData v4 payload for a character."""
+    return fetch_character_full(name, timeout=timeout)
+
+
+def fetch_worlds_tibiadata(timeout: int = 20) -> Dict[str, Any]:
+    r = requests.get(f"{API_BASE}/worlds", timeout=timeout)
     r.raise_for_status()
     return r.json()
 
 
-def fetch_worlds_tibiadata(timeout: int = 10) -> Dict:
-    """Alias compatível com versões antigas da UI."""
-    return fetch_worlds(timeout=timeout)
-
-
-def fetch_character_snapshot(name: str, timeout: int = 10) -> Dict:
-    """Nome "novo" (mantido)."""
-    return _fetch_character_snapshot(name, timeout=timeout)
-
-
-def fetch_character_tibiadata(name: str, timeout: int = 10) -> Dict:
-    """Alias compatível com versões antigas da UI."""
-    return fetch_character_snapshot(name, timeout=timeout)
-
-
-__all__ = [
-    "fetch_worlds",
-    "fetch_worlds_tibiadata",
-    "fetch_character_snapshot",
-    "fetch_character_tibiadata",
-]
+def fetch_world_overview(world: str, timeout: int = 20) -> Dict[str, Any]:
+    world = (world or "").strip()
+    if not world:
+        raise ValueError("World vazio.")
+    r = requests.get(f"{API_BASE}/world/{quote(world)}", timeout=timeout)
+    r.raise_for_status()
+    return r.json()
