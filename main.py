@@ -27,9 +27,9 @@ from kivymd.uix.button import MDFlatButton
 from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
 from kivymd.uix.menu import MDDropdownMenu
 
-from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata, is_character_online_tibiadata
 CORE_IMPORT_ERROR = None
 try:
+    from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata, is_character_online_tibiadata
     from core.storage import get_data_dir, safe_read_json, safe_write_json
     from core.bosses import fetch_exevopan_bosses
     from core.boosted import fetch_boosted
