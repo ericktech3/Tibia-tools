@@ -1,6 +1,6 @@
 #:import dp kivy.metrics.dp
 
-<MoreItem>:
+<MoreItem@OneLineIconListItem>:
     icon: "chevron-right"
     IconLeftWidget:
         icon: root.icon
@@ -37,84 +37,76 @@ RootSM:
                 text: "Char"
                 icon: "account-search"
 
-                ScrollView:
-                    do_scroll_x: False
+                MDBoxLayout:
+                    orientation: "vertical"
+                    padding: dp(12)
+                    spacing: dp(10)
 
-                    MDBoxLayout:
-                        orientation: "vertical"
-                        padding: dp(12)
-                        spacing: dp(10)
+                    MDTextField:
+                        id: char_name
+                        hint_text: "Nome do personagem"
+                        mode: "rectangle"
+
+                    MDRaisedButton:
+                        text: "Buscar"
+                        on_release: app.search_character()
+
+                    MDRaisedButton:
+                        text: "Abrir no Tibia.com"
+                        on_release: app.open_last_in_browser()
+
+                    MDRaisedButton:
+                        text: "Favoritar"
+                        on_release: app.add_current_to_favorites()
+
+                    MDLabel:
+                        id: char_status
+                        text: "Faça uma busca."
+                        halign: "left"
+                        valign: "top"
                         size_hint_y: None
-                        height: self.minimum_height
+                        height: self.texture_size[1] + dp(20)
 
-                        MDTextField:
-                            id: char_name
-                            hint_text: "Nome do personagem"
-                            mode: "rectangle"
-
-                        MDRaisedButton:
-                            text: "Buscar"
-                            on_release: app.search_character()
-
-                        MDRaisedButton:
-                            text: "Abrir no Tibia.com"
-                            on_release: app.open_last_in_browser()
-
-                        MDRaisedButton:
-                            text: "Favoritar"
-                            on_release: app.add_current_to_favorites()
-
-                        MDLabel:
-                            id: char_status
-                            text: "Faça uma busca."
-                            halign: "left"
-                            valign: "top"
-                            size_hint_y: None
-                            height: self.texture_size[1] + dp(20)
-                            text_size: self.width, None
             MDBottomNavigationItem:
-                name: "tab_share"
-                text: "Share XP"
-                icon: "account-group"
+                name: "tab_bless"
+                text: "Bless"
+                icon: "shield-check"
 
-                ScrollView:
-                    do_scroll_x: False
+                MDBoxLayout:
+                    orientation: "vertical"
+                    padding: dp(12)
+                    spacing: dp(10)
+
+                    MDTextField:
+                        id: bless_level
+                        hint_text: "Level"
+                        mode: "rectangle"
+                        input_filter: "int"
 
                     MDBoxLayout:
-                        orientation: "vertical"
-                        padding: dp(12)
-                        spacing: dp(10)
                         size_hint_y: None
-                        height: self.minimum_height
-
-                        MDTextField:
-                            id: share_level
-                            hint_text: "Seu level"
-                            mode: "rectangle"
-                            input_filter: "int"
-
-                        MDRaisedButton:
-                            text: "Calcular"
-                            on_release: app.calc_shared_xp()
+                        height: dp(48)
+                        spacing: dp(10)
 
                         MDLabel:
-                            id: share_result
-                            text: "Digite um level e toque em Calcular."
-                            halign: "left"
-                            valign: "top"
-                            text_size: self.width, None
-                            size_hint_y: None
-                            height: self.texture_size[1] + dp(20)
+                            text: "PvP:"
+                            size_hint_x: None
+                            width: dp(60)
+                            valign: "middle"
 
-                        MDLabel:
-                            text: "Regra do share: menor >= 2/3 do maior (equivalente a: faixa = ceil(L*2/3) até floor(L*3/2))."
-                            theme_text_color: "Hint"
-                            halign: "left"
-                            text_size: self.width, None
-                            size_hint_y: None
-                            height: self.texture_size[1] + dp(10)
+                        MDSwitch:
+                            id: bless_pvp
+                            active: True
 
+                    MDRaisedButton:
+                        text: "Calcular"
+                        on_release: app.calc_blessings()
 
+                    MDLabel:
+                        id: bless_result
+                        text: ""
+                        halign: "left"
+                        valign: "top"
 
             MDBottomNavigationItem:
                 name: "tab_fav"
@@ -162,13 +154,6 @@ RootSM:
                             text: "Hunt Analyzer"
                             icon: "chart-bar"
                             on_release: app.open_more_target("hunt")
-                        MDSeparator:
-                            height: dp(1)
-
-                        OneLineListItem:
-                            text: "Criado por Monk Curandeiro"
-                            disabled: True
-
 
 
 <BossesScreen@MDScreen>:

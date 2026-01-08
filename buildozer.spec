@@ -3,9 +3,6 @@
 # (str) Title of your application
 title = Tibia Tools
 
-# (str) Icon of the application
-icon.filename = assets/icon.png
-
 # (str) Package name
 package.name = tibiatools
 
@@ -41,8 +38,7 @@ android.archs = arm64-v8a,armeabi-v7a
 # Permissões mínimas (INTERNET é essencial se você busca dados online)
 android.permissions = INTERNET
 
-# Ajusta a tela quando o teclado abre (evita sobrepor o campo)
-android.add_manifest_activity_attributes = android:windowSoftInputMode="adjustResize"
-
 # ✅ evita prompt interativo de licença no GitHub Actions
 android.accept_sdk_license = True
+# Keyboard behavior
+android.manifest.placeholders = android:windowSoftInputMode="adjustResize"

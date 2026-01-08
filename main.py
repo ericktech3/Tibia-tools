@@ -2,7 +2,7 @@
 """
 Tibia Tools (Android) - KivyMD app
 
-Tabs: Char / Share XP / Favoritos / Mais
+Tabs: Char / Bless / Favoritos / Mais
 Mais -> telas internas: Bosses (ExevoPan), Boosted, Treino (Exercise), Imbuements, Hunt Analyzer
 """
 from __future__ import annotations
@@ -10,34 +10,37 @@ from __future__ import annotations
 import os
 import threading
 import webbrowser
-import traceback
+
+# --- DEBUG SAFE IMPORTS (prevents silent crash on Android) ---
+import traceback as _traceback
+_CORE_IMPORT_ERROR = None
+try:
+    from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata
+    from core.storage import get_data_dir, safe_read_json, safe_write_json
+    from core.bosses import fetch_exevopan_bosses
+    from core.boosted import fetch_boosted
+    from core.training import TrainingInput, compute_training_plan
+    from core.hunt import parse_hunt_session_text
+    from core.imbuements import fetch_imbuements_table
+except Exception as e:
+    _CORE_IMPORT_ERROR = e
+    _traceback.print_exc()
+# --- END DEBUG SAFE IMPORTS ---
+
 from typing import List, Optional
 
-from kivy.core.window import Window
 from kivy.lang import Builder
-from kivy.resources import resource_find
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager
 
 from kivymd.app import MDApp
+from kivymd.uix.snackbar import Snackbar
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
 from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
 from kivymd.uix.menu import MDDropdownMenu
-
-CORE_IMPORT_ERROR = None
-try:
-    from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata, is_character_online_tibiadata
-    from core.storage import get_data_dir, safe_read_json, safe_write_json
-    from core.bosses import fetch_exevopan_bosses
-    from core.boosted import fetch_boosted
-    from core.training import TrainingInput, compute_training_plan
-    from core.hunt import parse_hunt_session_text
-    from core.imbuements import fetch_imbuements_table, ImbuementEntry
-except Exception:
-    CORE_IMPORT_ERROR = traceback.format_exc()
 
 
 KV_FILE = "tibia_tools.kv"
@@ -66,27 +69,16 @@ class TibiaToolsApp(MDApp):
         self._menu_weapon: Optional[MDDropdownMenu] = None
 
     def build(self):
-        if CORE_IMPORT_ERROR:
+        # If core imports failed, show error instead of closing
+        if _CORE_IMPORT_ERROR is not None:
             from kivymd.uix.label import MDLabel
-            # Mostra o erro na tela (sem precisar de logcat)
-            txt = CORE_IMPORT_ERROR[-2000:]
-            return MDLabel(text="Erro de dependência/import:\n\n"+txt, halign="left")
+            return MDLabel(text='Erro ao iniciar:\n' + str(_CORE_IMPORT_ERROR) + '\n\nVeja logcat para o Traceback.', halign='center')
 
-        Window.softinput_mode = "below_target"
-        self.icon = "assets/icon.png"
         self.title = "Tibia Tools"
         self.theme_cls.primary_palette = "Blue"
         self.theme_cls.theme_style = "Dark"
 
-        try:
-            kv_path = resource_find(KV_FILE) or KV_FILE
-            root = Builder.load_file(kv_path)
-        except Exception:
-            # Vai aparecer no logcat como Python traceback
-            traceback.print_exc()
-            # Mostra o erro na tela em vez de fechar sem explicar
-            from kivymd.uix.label import MDLabel
-            root = MDLabel(text="Erro ao iniciar. Veja o logcat (Traceback).", halign="center")
+        root = Builder.load_file(KV_FILE)
         self.load_favorites()
         Clock.schedule_once(lambda *_: self.refresh_favorites_list(), 0)
         Clock.schedule_once(lambda *_: self.update_boosted(), 0)
@@ -125,189 +117,53 @@ class TibiaToolsApp(MDApp):
     def save_favorites(self):
         safe_write_json(self.fav_path, self.favorites)
 
-    def toast(self, message: str):
-        """Mostra uma mensagem rápida sem derrubar o app."""
-        try:
-            from kivymd.uix.snackbar import Snackbar  # type: ignore
-            try:
-                Snackbar(text=message).open()
-                return
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        try:
-            from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText  # type: ignore
-            sb = MDSnackbar(MDSnackbarText(text=message))
-            sb.open()
-            return
-        except Exception:
-            pass
-
-        print(f"[TOAST] {message}")
-
-
     # --------------------
     # Char tab
     # --------------------
+    def search_character(self):
+        home = self.root.get_screen("home")
+        name = (home.ids.char_name.text or "").strip()
+        if not name:
+            Snackbar(text="Digite o nome do char.").open()
+            return
 
-def search_character(self):
-    home = self.root.get_screen("home")
-    name = (home.ids.char_name.text or "").strip()
-    if not name:
-        self.toast("Digite o nome do char.")
-        return
+        home.ids.char_status.text = "Buscando..."
+        home.char_last_url = ""
 
-    home.ids.char_status.text = "Buscando..."
-    home.char_last_url = ""
+        def worker():
+            try:
+                data = fetch_character_tibiadata(name)
+                if not data:
+                    raise ValueError("Sem resposta da API.")
+                character = data.get("character", {})
+                url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
+                status = character.get("status", "N/A")
+                voc = character.get("vocation", "N/A")
+                level = character.get("level", "N/A")
+                world = character.get("world", "N/A")
+                result = f"Status: {status}\nVocation: {voc}\nLevel: {level}\nWorld: {world}"
+                return True, result, url
+            except Exception as e:
+                return False, f"Erro: {e}", ""
 
-    def worker():
-        try:
-            data = fetch_character_tibiadata(name)
-            if not data:
-                raise ValueError("Sem resposta da API.")
+        def done(res):
+            ok, text, url = res
+            home.ids.char_status.text = text
+            home.char_last_url = url
+            if ok:
+                Snackbar(text="Char encontrado.").open()
 
-            cw = data.get("character", {}) or {}
-            c = cw.get("character", {}) or {}
+        def run():
+            res = worker()
+            Clock.schedule_once(lambda *_: done(res), 0)
 
-            url = c.get("url") or ""
-
-            voc = c.get("vocation") or "N/A"
-            level = c.get("level") if c.get("level") is not None else "N/A"
-            world = c.get("world") or "N/A"
-
-            # Status pode vir direto do endpoint, mas nem sempre vem preenchido
-            status_raw = (c.get("status") or "").strip().lower()
-            if status_raw in ("online", "offline"):
-                status = status_raw
-            else:
-                online = None
-                if world and world != "N/A":
-                    online = is_character_online_tibiadata(name, world)
-                if online is True:
-                    status = "online"
-                elif online is False:
-                    status = "offline"
-                else:
-                    status = "N/A"
-
-            # Guild
-            guild_txt = ""
-            g = c.get("guild")
-            if isinstance(g, dict):
-                gname = (g.get("name") or "").strip()
-                grank = (g.get("rank") or "").strip()
-                if gname and grank:
-                    guild_txt = f"{gname} ({grank})"
-                elif gname:
-                    guild_txt = gname
-
-            # Houses
-            houses_txt = ""
-            houses = c.get("houses") or []
-            if isinstance(houses, list) and houses:
-                parts = []
-                for h in houses:
-                    if not isinstance(h, dict):
-                        continue
-                    hname = (h.get("name") or "").strip()
-                    htown = (h.get("town") or h.get("location") or "").strip()
-                    if hname and htown:
-                        parts.append(f"{hname} ({htown})")
-                    elif hname:
-                        parts.append(hname)
-                if parts:
-                    houses_txt = "; ".join(parts)
-
-            # Últimas mortes
-            deaths = cw.get("deaths") or c.get("deaths") or data.get("deaths") or []
-            death_lines = []
-            if isinstance(deaths, list) and deaths:
-                for d in deaths[:5]:
-                    if not isinstance(d, dict):
-                        continue
-                    when = (d.get("time") or d.get("date") or "").strip()
-                    lvl = d.get("level")
-                    lvl_txt = f"lvl {lvl}" if lvl is not None else ""
-                    reason = (d.get("reason") or d.get("description") or "").strip()
-
-                    involved = d.get("involved") or []
-                    killers = []
-                    if isinstance(involved, list):
-                        for inv in involved:
-                            if isinstance(inv, dict) and inv.get("name"):
-                                killers.append(inv["name"])
-                            elif isinstance(inv, str):
-                                killers.append(inv)
-                    if killers and reason and "by" not in reason.lower():
-                        reason = f"{reason} (by {', '.join(killers)})"
-
-                    line = f"- {when} {lvl_txt} {reason}".strip()
-                    death_lines.append(line)
-
-            result_lines = [
-                f"Status: {status}",
-                f"Vocation: {voc}",
-                f"Level: {level}",
-                f"World: {world}",
-            ]
-            if guild_txt:
-                result_lines.append(f"Guild: {guild_txt}")
-            if houses_txt:
-                result_lines.append(f"Houses: {houses_txt}")
-            if death_lines:
-                result_lines.append("Últimas mortes:")
-                result_lines.extend(death_lines)
-
-            return True, "\n".join(result_lines), url
-        except Exception as e:
-            return False, f"Erro: {e}", ""
-
-    def done(res):
-        ok, text, url = res
-        home.ids.char_status.text = text
-        home.char_last_url = url
-        if ok:
-            self.toast("Char encontrado.")
-
-    def run():
-        res = worker()
-        Clock.schedule_once(lambda *_: done(res), 0)
-
-    threading.Thread(target=run, daemon=True).start()
-
-def calc_shared_xp(self):
-    home = self.root.get_screen("home")
-    txt = (home.ids.share_level.text or "").strip()
-    if not txt:
-        home.ids.share_result.text = "Digite um level."
-        return
-    try:
-        lvl = int(txt)
-        if lvl <= 0:
-            raise ValueError
-    except Exception:
-        home.ids.share_result.text = "Level inválido."
-        return
-
-    # Regra oficial: menor >= 2/3 do maior
-    # Para um level L, a faixa que consegue sharear é:
-    # ceil(L*2/3) até floor(L*3/2)
-    import math
-    min_lvl = math.ceil(lvl * 2 / 3)
-    max_lvl = math.floor(lvl * 3 / 2)
-
-    home.ids.share_result.text = (
-        f"Para o level {lvl}, dá para sharear com levels\n"
-        f"de {min_lvl} até {max_lvl}."
-    )
+        threading.Thread(target=run, daemon=True).start()
 
     def open_last_in_browser(self):
         home = self.root.get_screen("home")
         url = getattr(home, "char_last_url", "") or ""
         if not url:
-            self.toast("Sem link ainda. Faça uma busca primeiro.")
+            Snackbar(text="Sem link ainda. Faça uma busca primeiro.").open()
             return
         webbrowser.open(url)
 
@@ -315,16 +171,16 @@ def calc_shared_xp(self):
         home = self.root.get_screen("home")
         name = (home.ids.char_name.text or "").strip()
         if not name:
-            self.toast("Digite o nome do char.")
+            Snackbar(text="Digite o nome do char.").open()
             return
         if name not in self.favorites:
             self.favorites.append(name)
             self.favorites.sort(key=lambda s: s.lower())
             self.save_favorites()
             self.refresh_favorites_list()
-            self.toast("Adicionado aos favoritos.")
+            Snackbar(text="Adicionado aos favoritos.").open()
         else:
-            self.toast("Já está nos favoritos.")
+            Snackbar(text="Já está nos favoritos.").open()
 
     # --------------------
     # Favorites tab
@@ -352,7 +208,7 @@ def calc_shared_xp(self):
                 self.favorites.remove(name)
                 self.save_favorites()
                 self.refresh_favorites_list()
-                self.toast("Removido.")
+                Snackbar(text="Removido.").open()
             dlg.dismiss()
 
         def open_char(*_):
@@ -371,7 +227,18 @@ def calc_shared_xp(self):
         dlg.open()
 
     # --------------------
-
+    # Bless tab
+    # --------------------
+    def calc_blessings(self):
+        home = self.root.get_screen("home")
+        try:
+            level = int((home.ids.bless_level.text or "0").strip())
+            pvp = home.ids.bless_pvp.active
+        except ValueError:
+            Snackbar(text="Digite um level válido.").open()
+            return
+        cost = calc_blessings_cost(level, pvp=pvp)
+        home.ids.bless_result.text = f"Custo total: {cost:,} gp".replace(",", ".")
 
     # --------------------
     # Bosses (ExevoPan)
@@ -410,7 +277,7 @@ def calc_shared_xp(self):
         scr = self.root.get_screen("bosses")
         world = (scr.ids.world_field.text or "").strip()
         if not world:
-            self.toast("Digite o world.")
+            Snackbar(text="Digite o world.").open()
             return
 
         scr.ids.boss_status.text = "Buscando bosses..."
@@ -473,34 +340,32 @@ def calc_shared_xp(self):
         scr = self.root.get_screen("training")
 
         if self._menu_skill is None:
-            skills = ["Sword", "Axe", "Club", "Distance", "Shielding", "Magic Level", "Fist Fighting"]
+            skills = ["Sword", "Axe", "Club", "Distance", "Shielding", "Magic Level"]
             self._menu_skill = MDDropdownMenu(
                 caller=scr.ids.skill_drop,
                 items=[{"text": s, "on_release": (lambda x=s: self._set_training_skill(x))} for s in skills],
                 width_mult=4,
                 max_height=dp(320),
             )
-        # Menus de vocation/weapon só existem em algumas versões do KV.
-        if 'voc_drop' in scr.ids and 'voc_field' in scr.ids:
-            if self._menu_vocation is None:
-                            vocs = ["Knight", "Paladin", "Druid/Sorcerer", "None"]
-                            self._menu_vocation = MDDropdownMenu(
-                                caller=scr.ids.voc_drop,
-                                items=[{"text": v, "on_release": (lambda x=v: self._set_training_voc(x))} for v in vocs],
-                                width_mult=4,
-                                max_height=dp(260),
-                            )
-                
-        if 'weapon_drop' in scr.ids and 'weapon_field' in scr.ids:
-            if self._menu_weapon is None:
-                            weapons = ["Standard (500)", "Enhanced (1800)", "Lasting (14400)"]
-                            self._menu_weapon = MDDropdownMenu(
-                                caller=scr.ids.weapon_drop,
-                                items=[{"text": w, "on_release": (lambda x=w: self._set_training_weapon(x))} for w in weapons],
-                                width_mult=4,
-                                max_height=dp(260),
-                            )
-                
+
+        if self._menu_vocation is None:
+            vocs = ["Knight", "Paladin", "Druid/Sorcerer", "None"]
+            self._menu_vocation = MDDropdownMenu(
+                caller=scr.ids.voc_drop,
+                items=[{"text": v, "on_release": (lambda x=v: self._set_training_voc(x))} for v in vocs],
+                width_mult=4,
+                max_height=dp(260),
+            )
+
+        if self._menu_weapon is None:
+            weapons = ["Standard (500)", "Enhanced (1800)", "Lasting (14400)"]
+            self._menu_weapon = MDDropdownMenu(
+                caller=scr.ids.weapon_drop,
+                items=[{"text": w, "on_release": (lambda x=w: self._set_training_weapon(x))} for w in weapons],
+                width_mult=4,
+                max_height=dp(260),
+            )
+
     def _set_training_skill(self, skill: str):
         scr = self.root.get_screen("training")
         scr.ids.skill_field.text = skill
@@ -508,22 +373,13 @@ def calc_shared_xp(self):
 
     def _set_training_voc(self, voc: str):
         scr = self.root.get_screen("training")
-        w = scr.ids.get("voc_field")
-        if w is not None:
-            w.text = voc
-        if self._menu_vocation:
-            self._menu_vocation.dismiss()
-
+        scr.ids.voc_field.text = voc
+        self._menu_vocation.dismiss()
 
     def _set_training_weapon(self, weapon: str):
         scr = self.root.get_screen("training")
-        w = scr.ids.get("weapon_field")
-        if w is not None:
-            w.text = weapon
-        if self._menu_weapon:
-            self._menu_weapon.dismiss()
-
-
+        scr.ids.weapon_field.text = weapon
+        self._menu_weapon.dismiss()
 
     def training_calculate(self):
         scr = self.root.get_screen("training")
@@ -532,22 +388,12 @@ def calc_shared_xp(self):
             to = int((scr.ids.to_level.text or "").strip())
             loyalty = float((scr.ids.loyalty.text or "0").replace(",", ".").strip() or 0)
         except ValueError:
-            self.toast("Verifique os campos numéricos.")
+            Snackbar(text="Verifique os campos numéricos.").open()
             return
 
         skill = (scr.ids.skill_field.text or "Sword").strip()
-        voc_w = scr.ids.get("voc_field")
-        weapon_w = scr.ids.get("weapon_field")
-        voc = ((voc_w.text if voc_w else "") or "Knight").strip()
-        weapon = ((weapon_w.text if weapon_w else "") or "Enhanced (1800)").strip()
-        # inferência simples se não houver campo de vocation
-        if "voc_field" not in scr.ids:
-            if skill == "Magic Level":
-                voc = "Mage"
-            elif skill == "Distance":
-                voc = "Paladin"
-            else:
-                voc = "Knight"
+        voc = (scr.ids.voc_field.text or "Knight").strip()
+        weapon = (scr.ids.weapon_field.text or "Standard (500)").strip()
 
         inp = TrainingInput(
             skill=skill,
@@ -589,7 +435,7 @@ def calc_shared_xp(self):
         scr = self.root.get_screen("hunt")
         raw = (scr.ids.hunt_input.text or "").strip()
         if not raw:
-            self.toast("Cole o texto do Session Data.")
+            Snackbar(text="Cole o texto do Session Data.").open()
             return
         scr.ids.hunt_status.text = "Analisando..."
         scr.ids.hunt_output.text = ""
