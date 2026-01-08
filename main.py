@@ -2,7 +2,7 @@
 """
 Tibia Tools (Android) - KivyMD app
 
-Tabs: Char / Bless / Favoritos / Mais
+Tabs: Char / Share XP / Favoritos / Mais
 Mais -> telas internas: Bosses (ExevoPan), Boosted, Treino (Exercise), Imbuements, Hunt Analyzer
 """
 from __future__ import annotations
@@ -11,6 +11,7 @@ import os
 import threading
 import webbrowser
 import traceback
+import math
 from typing import List, Optional
 
 from kivy.lang import Builder
@@ -26,8 +27,7 @@ from kivymd.uix.button import MDFlatButton
 from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
 from kivymd.uix.menu import MDDropdownMenu
 
-from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata
-from core.utilities import calc_blessings_cost
+from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata, is_character_online_tibiadata
 from core.storage import get_data_dir, safe_read_json, safe_write_json
 from core.bosses import fetch_exevopan_bosses
 from core.boosted import fetch_boosted
@@ -157,11 +157,78 @@ class TibiaToolsApp(MDApp):
                 character_wrapper = data.get("character", {})
                 character = character_wrapper.get("character", character_wrapper) if isinstance(character_wrapper, dict) else {}
                 url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
-                status = character.get("status", "N/A")
                 voc = character.get("vocation", "N/A")
                 level = character.get("level", "N/A")
                 world = character.get("world", "N/A")
-                result = f"Status: {status}\nVocation: {voc}\nLevel: {level}\nWorld: {world}"
+
+                # TibiaData nem sempre retorna "status" (online/offline) de forma confiável.
+                status = character.get("status") or ""
+                if not status or str(status).strip().upper() == "N/A":
+                    online = is_character_online_tibiadata(name, world) if world and world != "N/A" else None
+                    if online is True:
+                        status = "online"
+                    elif online is False:
+                        status = "offline"
+                    else:
+                        status = "N/A"
+
+                guild = character.get("guild") or {}
+                if isinstance(guild, dict) and guild.get("name"):
+                    gname = str(guild.get("name") or "").strip()
+                    grank = str(guild.get("rank") or guild.get("title") or "").strip()
+                    guild_line = f"Guild: {gname}{(' (' + grank + ')') if grank else ''}"
+                else:
+                    guild_line = "Guild: N/A"
+
+                houses = character.get("houses") or []
+                if isinstance(houses, list):
+                    if not houses:
+                        house_line = "Houses: Nenhuma"
+                    else:
+                        parts = []
+                        for h in houses[:3]:
+                            if isinstance(h, dict):
+                                hn = str(h.get("name") or h.get("house") or "").strip()
+                                ht = str(h.get("town") or "").strip()
+                                if hn and ht:
+                                    parts.append(f"{hn} ({ht})")
+                                elif hn:
+                                    parts.append(hn)
+                            elif isinstance(h, str):
+                                parts.append(h.strip())
+                        parts = [p for p in parts if p]
+                        more = f" (+{len(houses) - len(parts)}...)" if len(houses) > len(parts) and parts else ""
+                        house_line = "Houses: " + (", ".join(parts) + more if parts else f"{len(houses)}")
+                else:
+                    house_line = "Houses: N/A"
+
+                deaths = character.get("deaths") or []
+                deaths_text = ""
+                if isinstance(deaths, list) and deaths:
+                    rows = []
+                    for d in deaths[:5]:
+                        if not isinstance(d, dict):
+                            continue
+                        time_s = str(d.get("time") or d.get("date") or "").strip()
+                        lvl_s = str(d.get("level") or "").strip()
+                        reason_s = str(d.get("reason") or d.get("description") or "").strip()
+                        if reason_s:
+                            if lvl_s:
+                                rows.append(f"- {time_s} (lvl {lvl_s}): {reason_s}".strip())
+                            else:
+                                rows.append(f"- {time_s}: {reason_s}".strip())
+                    if rows:
+                        deaths_text = "\nÚltimas mortes:\n" + "\n".join(rows)
+
+                result = (
+                    f"Status: {status}\n"
+                    f"Vocation: {voc}\n"
+                    f"Level: {level}\n"
+                    f"World: {world}\n"
+                    f"{guild_line}\n"
+                    f"{house_line}"
+                    f"{deaths_text}"
+                )
                 return True, result, url
             except Exception as e:
                 return False, f"Erro: {e}", ""
@@ -246,21 +313,32 @@ class TibiaToolsApp(MDApp):
         )
         dlg.open()
 
+        # --------------------
+    # Shared XP tab
     # --------------------
-    # Bless tab
-    # --------------------
-    def calc_blessings(self):
+    def calc_shared_xp(self):
         home = self.root.get_screen("home")
         try:
-            level = int((home.ids.bless_level.text or "0").strip())
-            pvp = home.ids.bless_pvp.active
+            level = int((home.ids.share_level.text or "0").strip())
         except ValueError:
             self.toast("Digite um level válido.")
             return
-        cost = calc_blessings_cost(level, pvp=pvp)
-        home.ids.bless_result.text = f"Custo total: {cost:,} gp".replace(",", ".")
 
-    # --------------------
+        if level <= 0:
+            self.toast("Digite um level maior que 0.")
+            return
+
+        # Regra do Tibia (party shared XP):
+        # Se você é level L, pode sharear com levels entre:
+        #   ceil(2/3 * L)  e  floor(3/2 * L)
+        min_level = int(math.ceil(level * 2.0 / 3.0))
+        max_level = int(math.floor(level * 3.0 / 2.0))
+
+        home.ids.share_result.text = (
+            f"Seu level: {level}\n"
+            f"Pode sharear com: {min_level} até {max_level}"
+        )
+# --------------------
     # Bosses (ExevoPan)
     # --------------------
     def _bosses_refresh_worlds(self):
