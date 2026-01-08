@@ -113,31 +113,28 @@ class TibiaToolsApp(MDApp):
     def save_favorites(self):
         safe_write_json(self.fav_path, self.favorites)
 
-
-def notify(self, message: str):
-    """Mostra uma mensagem rápida no app (compatível com várias versões do KivyMD).
-    Se o Snackbar falhar, apenas registra no log e evita crash.
-    """
-    try:
-        # KivyMD 1.x (Snackbar clássico)
+    def toast(self, message: str):
+        """Mostra uma mensagem rápida sem derrubar o app."""
         try:
             from kivymd.uix.snackbar import Snackbar  # type: ignore
-            self.notify(text=message)
+            try:
+                Snackbar(text=message).open()
+                return
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        try:
+            from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText  # type: ignore
+            sb = MDSnackbar(MDSnackbarText(text=message))
+            sb.open()
             return
         except Exception:
             pass
 
-        # KivyMD 2.x (MDSnackbar)
-        try:
-            from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText  # type: ignore
-            MDself.notify(MDSnackbarText(text=message))
-            return
-        except Exception:
-            pass
-    except Exception:
-        pass
-    # fallback (não derruba o app)
-    print(f"[NOTIFY] {message}")
+        print(f"[TOAST] {message}")
+
 
     # --------------------
     # Char tab
@@ -146,7 +143,7 @@ def notify(self, message: str):
         home = self.root.get_screen("home")
         name = (home.ids.char_name.text or "").strip()
         if not name:
-            self.notify("Digite o nome do char.")
+            self.toast("Digite o nome do char.")
             return
 
         home.ids.char_status.text = "Buscando..."
@@ -157,24 +154,13 @@ def notify(self, message: str):
                 data = fetch_character_tibiadata(name)
                 if not data:
                     raise ValueError("Sem resposta da API.")
-                info = data.get("character") or {}
-                # TibiaData costuma vir como {"character": {"character": {...}, "deaths": [...], ...}, "information": {...}}
-                # mas algumas versões retornam campos diretamente.
-                if isinstance(info, dict) and isinstance(info.get("character"), dict):
-                    char = info.get("character") or {}
-                    meta = info
-                elif isinstance(info, dict):
-                    char = info
-                    meta = info
-                else:
-                    char = {}
-                    meta = {}
-                
-                name = char.get("name") or name
-                status = (meta.get("status") or char.get("status") or "N/A")
-                world = (char.get("world") or "N/A")
-                vocation = (char.get("vocation") or "N/A")
-                level = (char.get("level") or "N/A")
+                character_wrapper = data.get("character", {})
+                character = character_wrapper.get("character", character_wrapper) if isinstance(character_wrapper, dict) else {}
+                url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
+                status = character.get("status", "N/A")
+                voc = character.get("vocation", "N/A")
+                level = character.get("level", "N/A")
+                world = character.get("world", "N/A")
                 result = f"Status: {status}\nVocation: {voc}\nLevel: {level}\nWorld: {world}"
                 return True, result, url
             except Exception as e:
@@ -185,7 +171,7 @@ def notify(self, message: str):
             home.ids.char_status.text = text
             home.char_last_url = url
             if ok:
-                self.notify("Char encontrado.")
+                self.toast("Char encontrado.")
 
         def run():
             res = worker()
@@ -197,7 +183,7 @@ def notify(self, message: str):
         home = self.root.get_screen("home")
         url = getattr(home, "char_last_url", "") or ""
         if not url:
-            self.notify("Sem link ainda. Faça uma busca primeiro.")
+            self.toast("Sem link ainda. Faça uma busca primeiro.")
             return
         webbrowser.open(url)
 
@@ -205,16 +191,16 @@ def notify(self, message: str):
         home = self.root.get_screen("home")
         name = (home.ids.char_name.text or "").strip()
         if not name:
-            self.notify("Digite o nome do char.")
+            self.toast("Digite o nome do char.")
             return
         if name not in self.favorites:
             self.favorites.append(name)
             self.favorites.sort(key=lambda s: s.lower())
             self.save_favorites()
             self.refresh_favorites_list()
-            self.notify("Adicionado aos favoritos.")
+            self.toast("Adicionado aos favoritos.")
         else:
-            self.notify("Já está nos favoritos.")
+            self.toast("Já está nos favoritos.")
 
     # --------------------
     # Favorites tab
@@ -242,7 +228,7 @@ def notify(self, message: str):
                 self.favorites.remove(name)
                 self.save_favorites()
                 self.refresh_favorites_list()
-                self.notify("Removido.")
+                self.toast("Removido.")
             dlg.dismiss()
 
         def open_char(*_):
@@ -269,7 +255,7 @@ def notify(self, message: str):
             level = int((home.ids.bless_level.text or "0").strip())
             pvp = home.ids.bless_pvp.active
         except ValueError:
-            self.notify("Digite um level válido.")
+            self.toast("Digite um level válido.")
             return
         cost = calc_blessings_cost(level, pvp=pvp)
         home.ids.bless_result.text = f"Custo total: {cost:,} gp".replace(",", ".")
@@ -311,7 +297,7 @@ def notify(self, message: str):
         scr = self.root.get_screen("bosses")
         world = (scr.ids.world_field.text or "").strip()
         if not world:
-            self.notify("Digite o world.")
+            self.toast("Digite o world.")
             return
 
         scr.ids.boss_status.text = "Buscando bosses..."
@@ -381,25 +367,27 @@ def notify(self, message: str):
                 width_mult=4,
                 max_height=dp(320),
             )
-
-        if self._menu_vocation is None:
-            vocs = ["Knight", "Paladin", "Druid/Sorcerer", "None"]
-            self._menu_vocation = MDDropdownMenu(
-                caller=scr.ids.voc_drop,
-                items=[{"text": v, "on_release": (lambda x=v: self._set_training_voc(x))} for v in vocs],
-                width_mult=4,
-                max_height=dp(260),
-            )
-
-        if self._menu_weapon is None:
-            weapons = ["Standard (500)", "Enhanced (1800)", "Lasting (14400)"]
-            self._menu_weapon = MDDropdownMenu(
-                caller=scr.ids.weapon_drop,
-                items=[{"text": w, "on_release": (lambda x=w: self._set_training_weapon(x))} for w in weapons],
-                width_mult=4,
-                max_height=dp(260),
-            )
-
+        # Menus de vocation/weapon só existem em algumas versões do KV.
+        if 'voc_drop' in scr.ids and 'voc_field' in scr.ids:
+            if self._menu_vocation is None:
+                            vocs = ["Knight", "Paladin", "Druid/Sorcerer", "None"]
+                            self._menu_vocation = MDDropdownMenu(
+                                caller=scr.ids.voc_drop,
+                                items=[{"text": v, "on_release": (lambda x=v: self._set_training_voc(x))} for v in vocs],
+                                width_mult=4,
+                                max_height=dp(260),
+                            )
+                
+        if 'weapon_drop' in scr.ids and 'weapon_field' in scr.ids:
+            if self._menu_weapon is None:
+                            weapons = ["Standard (500)", "Enhanced (1800)", "Lasting (14400)"]
+                            self._menu_weapon = MDDropdownMenu(
+                                caller=scr.ids.weapon_drop,
+                                items=[{"text": w, "on_release": (lambda x=w: self._set_training_weapon(x))} for w in weapons],
+                                width_mult=4,
+                                max_height=dp(260),
+                            )
+                
     def _set_training_skill(self, skill: str):
         scr = self.root.get_screen("training")
         scr.ids.skill_field.text = skill
@@ -407,13 +395,22 @@ def notify(self, message: str):
 
     def _set_training_voc(self, voc: str):
         scr = self.root.get_screen("training")
-        scr.ids.voc_field.text = voc
-        self._menu_vocation.dismiss()
+        w = scr.ids.get("voc_field")
+        if w is not None:
+            w.text = voc
+        if self._menu_vocation:
+            self._menu_vocation.dismiss()
+
 
     def _set_training_weapon(self, weapon: str):
         scr = self.root.get_screen("training")
-        scr.ids.weapon_field.text = weapon
-        self._menu_weapon.dismiss()
+        w = scr.ids.get("weapon_field")
+        if w is not None:
+            w.text = weapon
+        if self._menu_weapon:
+            self._menu_weapon.dismiss()
+
+
 
     def training_calculate(self):
         scr = self.root.get_screen("training")
@@ -422,12 +419,22 @@ def notify(self, message: str):
             to = int((scr.ids.to_level.text or "").strip())
             loyalty = float((scr.ids.loyalty.text or "0").replace(",", ".").strip() or 0)
         except ValueError:
-            self.notify("Verifique os campos numéricos.")
+            self.toast("Verifique os campos numéricos.")
             return
 
         skill = (scr.ids.skill_field.text or "Sword").strip()
-        voc = "Any"  # campo não existe na UI atual
-        weapon = "Standard (500)"  # padrão (sem seletor na UI)
+        voc_w = scr.ids.get("voc_field")
+        weapon_w = scr.ids.get("weapon_field")
+        voc = ((voc_w.text if voc_w else "") or "Knight").strip()
+        weapon = ((weapon_w.text if weapon_w else "") or "Enhanced (1800)").strip()
+        # inferência simples se não houver campo de vocation
+        if "voc_field" not in scr.ids:
+            if skill == "Magic Level":
+                voc = "Mage"
+            elif skill == "Distance":
+                voc = "Paladin"
+            else:
+                voc = "Knight"
 
         inp = TrainingInput(
             skill=skill,
@@ -469,7 +476,7 @@ def notify(self, message: str):
         scr = self.root.get_screen("hunt")
         raw = (scr.ids.hunt_input.text or "").strip()
         if not raw:
-            self.notify("Cole o texto do Session Data.")
+            self.toast("Cole o texto do Session Data.")
             return
         scr.ids.hunt_status.text = "Analisando..."
         scr.ids.hunt_output.text = ""
