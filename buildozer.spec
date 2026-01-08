@@ -4,6 +4,7 @@
 title = Tibia Tools
 
 # (str) Package name
+icon.filename = assets/icon.png
 package.name = tibiatools
 
 # (str) Package domain (needed for android/ios packaging)
@@ -17,9 +18,6 @@ source.include_exts = py,kv,png,jpg,jpeg,txt,json,ttf,atlas,ico
 
 # (str) Application versioning (method 1)
 version = 0.1.0
-
-# (Icone)
-icon.filename = assets/icon.png
 
 # (list) Application requirements
 # ✅ trava o KivyMD na versão compatível com MDBottomNavigation etc.
