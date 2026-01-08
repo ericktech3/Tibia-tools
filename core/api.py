@@ -1,46 +1,48 @@
 """HTTP helpers + aliases de compatibilidade.
 
-Motivo: em algumas refatorações, os nomes das funções mudaram.
-No Android, um `ImportError` na inicialização faz o app abrir e fechar.
+Este módulo existe para evitar que mudanças de nome quebrem o app no Android.
+A UI (main.py) usa principalmente:
+- fetch_character_tibiadata  -> deve retornar o JSON completo da TibiaData v4
+- fetch_worlds_tibiadata     -> JSON completo da lista de mundos
 
-A UI atual (main.py) usa:
-- fetch_character_tibiadata
-- fetch_worlds_tibiadata
-
-Este módulo garante esses nomes (e também expõe os nomes "novos").
+Também expomos:
+- fetch_character_snapshot   -> snapshot leve (para service/monitor)
 """
 
 from __future__ import annotations
 
 from typing import Dict
-
 import requests
 
 from .tibia import fetch_character_snapshot as _fetch_character_snapshot
 
 WORLDS_URL = "https://api.tibiadata.com/v4/worlds"
+CHAR_URL = "https://api.tibiadata.com/v4/character/{name}"
 
 
-def fetch_worlds(timeout: int = 10) -> Dict:
-    """Lista de mundos via TibiaData."""
-    r = requests.get(WORLDS_URL, timeout=timeout)
+def fetch_worlds(timeout: int = 12) -> Dict:
+    """Lista de mundos via TibiaData v4."""
+    r = requests.get(WORLDS_URL, timeout=timeout, headers={"User-Agent": "TibiaToolsAndroid/1.0"})
     r.raise_for_status()
     return r.json()
 
 
-def fetch_worlds_tibiadata(timeout: int = 10) -> Dict:
+def fetch_worlds_tibiadata(timeout: int = 12) -> Dict:
     """Alias compatível com versões antigas da UI."""
     return fetch_worlds(timeout=timeout)
 
 
-def fetch_character_snapshot(name: str, timeout: int = 10) -> Dict:
-    """Nome "novo" (mantido)."""
+def fetch_character_snapshot(name: str, timeout: int = 12) -> Dict:
+    """Snapshot leve (mantido para o service)."""
     return _fetch_character_snapshot(name, timeout=timeout)
 
 
-def fetch_character_tibiadata(name: str, timeout: int = 10) -> Dict:
-    """Alias compatível com versões antigas da UI."""
-    return fetch_character_snapshot(name, timeout=timeout)
+def fetch_character_tibiadata(name: str, timeout: int = 12) -> Dict:
+    """Retorna o JSON completo do endpoint /v4/character/{name}."""
+    url = CHAR_URL.format(name=requests.utils.quote(name))
+    r = requests.get(url, timeout=timeout, headers={"User-Agent": "TibiaToolsAndroid/1.0"})
+    r.raise_for_status()
+    return r.json()
 
 
 __all__ = [
