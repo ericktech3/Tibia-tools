@@ -80,55 +80,99 @@ def _find_best_boss_list(obj: Any) -> Optional[List[Dict[str, Any]]]:
     return best
 
 
+
+def _looks_like_world_list(items: List[Dict[str, str]]) -> bool:
+    """Heurística: se quase tudo é 1 palavra e a lista é muito grande,
+    provavelmente estamos pegando a lista de worlds (página errada) e não bosses.
+    """
+    names = [str(it.get("boss", "")).strip() for it in items if isinstance(it, dict)]
+    names = [n for n in names if n]
+    if not names:
+        return False
+    single = sum(1 for n in names if len(n.split()) == 1)
+    return len(names) >= 40 and (single / max(1, len(names))) > 0.9
+
+
+def _parse_bosses_from_text(html: str) -> List[Dict[str, str]]:
+    """Fallback: extrai bosses pelo texto visível (sem depender do __NEXT_DATA__)."""
+    # remove scripts/styles para reduzir ruído
+    cleaned = re.sub(r"<script\b[^>]*>.*?</script>", " ", html, flags=re.I | re.S)
+    cleaned = re.sub(r"<style\b[^>]*>.*?</style>", " ", cleaned, flags=re.I | re.S)
+    # remove tags
+    text = re.sub(r"<[^>]+>", " ", cleaned)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # padrões comuns no ExevoPan
+    chance_re = r"(No chance|Unknown|Low chance|Medium chance|High chance)"
+    pat = re.compile(rf"([A-Z][A-Za-z'’\- ]{{2,60}}?)\s+{chance_re}\b", re.U)
+
+    out: List[Dict[str, str]] = []
+    for name, chance in pat.findall(text):
+        boss = name.strip(" -")
+        # filtros básicos
+        if len(boss) < 3:
+            continue
+        if boss.lower() in {"bosses", "worlds", "buscar", "buscar bosses"}:
+            continue
+        out.append({"boss": boss, "chance": chance, "status": ""})
+
+    # dedupe mantendo ordem
+    seen = set()
+    uniq: List[Dict[str, str]] = []
+    for b in out:
+        key = (b.get("boss", "").lower(), b.get("chance", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(b)
+    return uniq
+
+
 def fetch_exevopan_bosses(world: str, timeout: int = 20) -> List[Dict[str, str]]:
     """Busca bosses do ExevoPan para um world.
 
     Retorna lista de dicts:
       {"boss": "...", "chance": "...", "status": "..."}
     """
-    url = EXEVOPAN_URL.format(world=world)
+    world = (world or "").strip()
+    if not world:
+        return []
+
+    # ExevoPan usa path; encode para não quebrar worlds com espaço
+    url = EXEVOPAN_URL.format(world=requests.utils.quote(world))
     headers = {"User-Agent": "Mozilla/5.0 (Android) TibiaTools/1.0"}
+
     html = requests.get(url, headers=headers, timeout=timeout).text
 
-    m = re.search(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
-    if not m:
-        return []
-
-    data = json.loads(m.group(1))
-    lst = _find_best_boss_list(data)
-    if not lst:
-        return []
-
+    # 1) Tenta via __NEXT_DATA__ (mais estruturado)
     out: List[Dict[str, str]] = []
-    for it in lst:
-        if not isinstance(it, dict):
-            continue
+    try:
+        m = re.search(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+        if m:
+            data = json.loads(m.group(1))
+            lst = _find_best_boss_list(data)
+            if lst:
+                for it in lst:
+                    if not isinstance(it, dict):
+                        continue
+                    name = it.get("boss") or it.get("bossName") or it.get("boss_name") or it.get("title") or it.get("name")
+                    if isinstance(name, dict):
+                        name = name.get("name") or name.get("title")
+                    if not name:
+                        continue
+                    chance = it.get("chance") or it.get("probability") or it.get("chanceText") or it.get("chance_text") or ""
+                    status = it.get("status") or it.get("time") or it.get("expected") or ""
+                    out.append({"boss": str(name), "chance": str(chance), "status": str(status)})
+    except Exception:
+        out = []
 
-        # nome do boss
-        name = it.get("boss") or it.get("bossName") or it.get("boss_name") or it.get("title") or it.get("name")
-        if isinstance(name, dict):
-            # às vezes vem como {"name": "..."}
-            name = name.get("name") or name.get("title")
-        if not name:
-            continue
-
-        chance = it.get("chanceText") or it.get("chance") or it.get("spawnChance") or it.get("spawn_chance") or ""
-        if isinstance(chance, dict):
-            chance = chance.get("text") or chance.get("name") or ""
-        if isinstance(chance, (int, float)):
-            chance = str(chance)
-
-        status = it.get("status") or it.get("state") or it.get("spawnState") or it.get("spawn_state") or ""
-        if isinstance(status, dict):
-            status = status.get("text") or status.get("name") or ""
-        if isinstance(status, (int, float)):
-            status = str(status)
-
-        out.append({"boss": str(name), "chance": str(chance), "status": str(status)})
+    # Se parece lista de worlds (bug comum), faz fallback
+    if not out or _looks_like_world_list(out):
+        out = _parse_bosses_from_text(html)
 
     # remove duplicados mantendo ordem
     seen = set()
-    uniq = []
+    uniq: List[Dict[str, str]] = []
     for b in out:
         key = (b.get("boss", "").lower(), b.get("chance", ""), b.get("status", ""))
         if key in seen:
