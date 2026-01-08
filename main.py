@@ -21,7 +21,6 @@ from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager
 
 from kivymd.app import MDApp
-from kivymd.uix.snackbar import Snackbar
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
 from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
@@ -114,6 +113,32 @@ class TibiaToolsApp(MDApp):
     def save_favorites(self):
         safe_write_json(self.fav_path, self.favorites)
 
+
+def notify(self, message: str):
+    """Mostra uma mensagem rápida no app (compatível com várias versões do KivyMD).
+    Se o Snackbar falhar, apenas registra no log e evita crash.
+    """
+    try:
+        # KivyMD 1.x (Snackbar clássico)
+        try:
+            from kivymd.uix.snackbar import Snackbar  # type: ignore
+            self.notify(text=message)
+            return
+        except Exception:
+            pass
+
+        # KivyMD 2.x (MDSnackbar)
+        try:
+            from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText  # type: ignore
+            MDself.notify(MDSnackbarText(text=message))
+            return
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # fallback (não derruba o app)
+    print(f"[NOTIFY] {message}")
+
     # --------------------
     # Char tab
     # --------------------
@@ -121,7 +146,7 @@ class TibiaToolsApp(MDApp):
         home = self.root.get_screen("home")
         name = (home.ids.char_name.text or "").strip()
         if not name:
-            Snackbar(text="Digite o nome do char.").open()
+            self.notify("Digite o nome do char.")
             return
 
         home.ids.char_status.text = "Buscando..."
@@ -132,30 +157,35 @@ class TibiaToolsApp(MDApp):
                 data = fetch_character_tibiadata(name)
                 if not data:
                     raise ValueError("Sem resposta da API.")
-                character = data.get("character", {})
-                url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
-                status = character.get("status", "N/A")
-                voc = character.get("vocation", "N/A")
-                level = character.get("level", "N/A")
-                world = character.get("world", "N/A")
+                info = data.get("character") or {}
+                # TibiaData costuma vir como {"character": {"character": {...}, "deaths": [...], ...}, "information": {...}}
+                # mas algumas versões retornam campos diretamente.
+                if isinstance(info, dict) and isinstance(info.get("character"), dict):
+                    char = info.get("character") or {}
+                    meta = info
+                elif isinstance(info, dict):
+                    char = info
+                    meta = info
+                else:
+                    char = {}
+                    meta = {}
+                
+                name = char.get("name") or name
+                status = (meta.get("status") or char.get("status") or "N/A")
+                world = (char.get("world") or "N/A")
+                vocation = (char.get("vocation") or "N/A")
+                level = (char.get("level") or "N/A")
                 result = f"Status: {status}\nVocation: {voc}\nLevel: {level}\nWorld: {world}"
                 return True, result, url
             except Exception as e:
                 return False, f"Erro: {e}", ""
 
         def done(res):
-            try:
-                ok, text, url = res
-                home.ids.char_status.text = str(text)
-                home.char_last_url = url
-                if ok:
-                    Snackbar(text="Char encontrado.").open()
-            except Exception as e:
-                # Prevent hard-crash on UI callback
-                try:
-                    home.ids.char_status.text = f"Erro interno: {e}"
-                except Exception:
-                    pass
+            ok, text, url = res
+            home.ids.char_status.text = text
+            home.char_last_url = url
+            if ok:
+                self.notify("Char encontrado.")
 
         def run():
             res = worker()
@@ -167,7 +197,7 @@ class TibiaToolsApp(MDApp):
         home = self.root.get_screen("home")
         url = getattr(home, "char_last_url", "") or ""
         if not url:
-            Snackbar(text="Sem link ainda. Faça uma busca primeiro.").open()
+            self.notify("Sem link ainda. Faça uma busca primeiro.")
             return
         webbrowser.open(url)
 
@@ -175,16 +205,16 @@ class TibiaToolsApp(MDApp):
         home = self.root.get_screen("home")
         name = (home.ids.char_name.text or "").strip()
         if not name:
-            Snackbar(text="Digite o nome do char.").open()
+            self.notify("Digite o nome do char.")
             return
         if name not in self.favorites:
             self.favorites.append(name)
             self.favorites.sort(key=lambda s: s.lower())
             self.save_favorites()
             self.refresh_favorites_list()
-            Snackbar(text="Adicionado aos favoritos.").open()
+            self.notify("Adicionado aos favoritos.")
         else:
-            Snackbar(text="Já está nos favoritos.").open()
+            self.notify("Já está nos favoritos.")
 
     # --------------------
     # Favorites tab
@@ -212,7 +242,7 @@ class TibiaToolsApp(MDApp):
                 self.favorites.remove(name)
                 self.save_favorites()
                 self.refresh_favorites_list()
-                Snackbar(text="Removido.").open()
+                self.notify("Removido.")
             dlg.dismiss()
 
         def open_char(*_):
@@ -239,7 +269,7 @@ class TibiaToolsApp(MDApp):
             level = int((home.ids.bless_level.text or "0").strip())
             pvp = home.ids.bless_pvp.active
         except ValueError:
-            Snackbar(text="Digite um level válido.").open()
+            self.notify("Digite um level válido.")
             return
         cost = calc_blessings_cost(level, pvp=pvp)
         home.ids.bless_result.text = f"Custo total: {cost:,} gp".replace(",", ".")
@@ -281,7 +311,7 @@ class TibiaToolsApp(MDApp):
         scr = self.root.get_screen("bosses")
         world = (scr.ids.world_field.text or "").strip()
         if not world:
-            Snackbar(text="Digite o world.").open()
+            self.notify("Digite o world.")
             return
 
         scr.ids.boss_status.text = "Buscando bosses..."
@@ -392,12 +422,12 @@ class TibiaToolsApp(MDApp):
             to = int((scr.ids.to_level.text or "").strip())
             loyalty = float((scr.ids.loyalty.text or "0").replace(",", ".").strip() or 0)
         except ValueError:
-            Snackbar(text="Verifique os campos numéricos.").open()
+            self.notify("Verifique os campos numéricos.")
             return
 
         skill = (scr.ids.skill_field.text or "Sword").strip()
-        voc = (scr.ids.voc_field.text or "Knight").strip()
-        weapon = (scr.ids.weapon_field.text or "Standard (500)").strip()
+        voc = "Any"  # campo não existe na UI atual
+        weapon = "Standard (500)"  # padrão (sem seletor na UI)
 
         inp = TrainingInput(
             skill=skill,
@@ -439,7 +469,7 @@ class TibiaToolsApp(MDApp):
         scr = self.root.get_screen("hunt")
         raw = (scr.ids.hunt_input.text or "").strip()
         if not raw:
-            Snackbar(text="Cole o texto do Session Data.").open()
+            self.notify("Cole o texto do Session Data.")
             return
         scr.ids.hunt_status.text = "Analisando..."
         scr.ids.hunt_output.text = ""

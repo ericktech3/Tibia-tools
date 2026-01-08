@@ -1,28 +1,56 @@
-# core/boosted.py
-# Boosted creature + boosted boss (TibiaData v4)
+import requests
 
-from __future__ import annotations
 
-from .api import fetch_json
+def _deep_get(data, path):
+    cur = data
+    for k in path:
+        if isinstance(cur, dict) and k in cur:
+            cur = cur[k]
+        else:
+            return None
+    return cur
 
-def fetch_boosted() -> dict:
-    """Return {'creature': <name>, 'boss': <name>} or {} on error."""
+
+def fetch_boosted(timeout: int = 10):
+    """Busca boosted creature e boosted boss no TibiaData (v4).
+
+    Retorna dict: {"creature": str, "boss": str}
+    """
+    url_c = "https://api.tibiadata.com/v4/boostedcreature"
+    url_b = "https://api.tibiadata.com/v4/boostedboss"
+    headers = {"User-Agent": "Mozilla/5.0 (Android) TibiaTools/1.0"}
+
+    def pick_name(payload, candidates):
+        for path in candidates:
+            val = _deep_get(payload, path)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return "N/A"
+
     try:
-        # Boosted creature comes from /v4/creatures (key: creatures.boosted)
-        creatures = fetch_json("https://api.tibiadata.com/v4/creatures")
-        boosted_creature = (
-            creatures.get("creatures", {}).get("boosted", {}) or {}
-        )
-        creature_name = boosted_creature.get("name")
-
-        # Boosted boss comes from /v4/boostablebosses (key: boostable_bosses.boosted)
-        bosses = fetch_json("https://api.tibiadata.com/v4/boostablebosses")
-        boosted_boss = (
-            bosses.get("boostable_bosses", {}).get("boosted", {}) or {}
-        )
-        boss_name = boosted_boss.get("name")
-
-        out = {"creature": creature_name or "N/A", "boss": boss_name or "N/A"}
-        return out
+        dc = requests.get(url_c, headers=headers, timeout=timeout).json()
     except Exception:
-        return {}
+        dc = {}
+
+    try:
+        db = requests.get(url_b, headers=headers, timeout=timeout).json()
+    except Exception:
+        db = {}
+
+    creature = pick_name(dc, [
+        ("boosted", "creature", "name"),
+        ("boosted", "boosted_creature", "name"),
+        ("boosted_creature", "name"),
+        ("boostedcreature", "name"),
+        ("creature", "name"),
+    ])
+
+    boss = pick_name(db, [
+        ("boosted", "boss", "name"),
+        ("boosted", "boosted_boss", "name"),
+        ("boosted_boss", "name"),
+        ("boostedboss", "name"),
+        ("boss", "name"),
+    ])
+
+    return {"creature": creature, "boss": boss}
