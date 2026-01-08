@@ -28,6 +28,9 @@ orientation = portrait
 # (str) Fullscreen mode (0 = not fullscreen)
 fullscreen = 0
 
+# (icone]
+icon.filename = assets/icon.png
+
 
 # --- ANDROID ---
 android.api = 33
