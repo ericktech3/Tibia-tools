@@ -1,6 +1,6 @@
 #:import dp kivy.metrics.dp
 
-<MoreItem@OneLineIconListItem>:
+<MoreItem>:
     icon: "chevron-right"
     IconLeftWidget:
         icon: root.icon
@@ -68,46 +68,36 @@ RootSM:
                         height: self.texture_size[1] + dp(20)
 
             MDBottomNavigationItem:
-                name: "tab_bless"
-                text: "Bless"
-                icon: "shield-check"
+                name: "tab_share"
+                text: "Share XP"
+                icon: "account-group"
 
                 MDBoxLayout:
                     orientation: "vertical"
                     padding: dp(12)
                     spacing: dp(10)
 
+                    MDLabel:
+                        text: "Calculadora de Shared XP"
+                        bold: True
+                        size_hint_y: None
+                        height: self.texture_size[1] + dp(6)
+
                     MDTextField:
-                        id: bless_level
-                        hint_text: "Level"
+                        id: share_level
+                        hint_text: "Seu level"
                         mode: "rectangle"
                         input_filter: "int"
 
-                    MDBoxLayout:
-                        size_hint_y: None
-                        height: dp(48)
-                        spacing: dp(10)
-
-                        MDLabel:
-                            text: "PvP:"
-                            size_hint_x: None
-                            width: dp(60)
-                            valign: "middle"
-
-                        MDSwitch:
-                            id: bless_pvp
-                            active: True
-
                     MDRaisedButton:
                         text: "Calcular"
-                        on_release: app.calc_blessings()
+                        on_release: app.calc_shared_xp()
 
                     MDLabel:
-                        id: bless_result
+                        id: share_result
                         text: ""
                         halign: "left"
                         valign: "top"
-
             MDBottomNavigationItem:
                 name: "tab_fav"
                 text: "Favoritos"
