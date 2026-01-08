@@ -18,6 +18,9 @@ source.include_exts = py,kv,png,jpg,jpeg,txt,json,ttf,atlas,ico
 # (str) Application versioning (method 1)
 version = 0.1.0
 
+# (Icone)
+icon.filename = assets/icon.png
+
 # (list) Application requirements
 # ✅ trava o KivyMD na versão compatível com MDBottomNavigation etc.
 requirements = python3,kivy,kivymd==1.2.0,requests,urllib3,idna,charset-normalizer,chardet,certifi,beautifulsoup4,soupsieve,typing_extensions
