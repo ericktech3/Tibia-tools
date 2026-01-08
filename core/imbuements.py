@@ -12,7 +12,8 @@ class ImbuementEntry:
 def fetch_imbuements_table():
     try:
         url = "https://www.tibiawiki.com.br/wiki/Imbuements"
-        html = requests.get(url, timeout=15).text
+        headers = {"User-Agent": "Mozilla/5.0 (Android) TibiaTools/1.0", "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"}
+        html = requests.get(url, headers=headers, timeout=15).text
         soup = BeautifulSoup(html, "html.parser")
 
         tables = soup.find_all("table")
