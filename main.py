@@ -10,23 +10,6 @@ from __future__ import annotations
 import os
 import threading
 import webbrowser
-# --- DEBUG SAFE IMPORTS (prevents silent crash on Android) ---
-import traceback as _traceback
-_CORE_IMPORT_ERROR = None
-try:
-    from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata
-    from core.utilities import calc_blessings_cost
-    from core.storage import get_data_dir, safe_read_json, safe_write_json
-    from core.bosses import fetch_exevopan_bosses
-    from core.boosted import fetch_boosted
-    from core.training import TrainingInput, compute_training_plan
-    from core.hunt import parse_hunt_session_text
-    from core.imbuements import fetch_imbuements_table
-except Exception as e:
-    _CORE_IMPORT_ERROR = e
-    _traceback.print_exc()
-# --- END DEBUG SAFE IMPORTS ---
-
 import traceback
 import math
 from typing import List, Optional
@@ -37,12 +20,21 @@ from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager
+from kivy.core.window import Window
 
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
 from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
 from kivymd.uix.menu import MDDropdownMenu
+
+from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata, is_character_online_tibiadata
+from core.storage import get_data_dir, safe_read_json, safe_write_json
+from core.bosses import fetch_exevopan_bosses
+from core.boosted import fetch_boosted
+from core.training import TrainingInput, compute_training_plan
+from core.hunt import parse_hunt_session_text
+from core.imbuements import fetch_imbuements_table, ImbuementEntry
 
 
 KV_FILE = "tibia_tools.kv"
@@ -71,11 +63,6 @@ class TibiaToolsApp(MDApp):
         self._menu_weapon: Optional[MDDropdownMenu] = None
 
     def build(self):
-        # If core imports failed, show error instead of closing
-        if _CORE_IMPORT_ERROR is not None:
-            from kivymd.uix.label import MDLabel
-            return MDLabel(text='Erro ao iniciar:\n' + str(_CORE_IMPORT_ERROR) + '\n\nVeja logcat para o Traceback.', halign='center')
-
         self.title = "Tibia Tools"
         self.theme_cls.primary_palette = "Blue"
         self.theme_cls.theme_style = "Dark"
@@ -178,7 +165,8 @@ class TibiaToolsApp(MDApp):
                 # TibiaData nem sempre retorna "status" (online/offline) de forma confiável.
                 status = character.get("status") or ""
                 if not status or str(status).strip().upper() == "N/A":
-                    online = is_character_online_tibiadata(name, world) if world and world != "N/A" else None
+                    online_fn = globals().get('is_character_online_tibiadata')
+                    online = online_fn(name, world) if callable(online_fn) and world and world != 'N/A' else None
                     if online is True:
                         status = "online"
                     elif online is False:
@@ -216,7 +204,7 @@ class TibiaToolsApp(MDApp):
                 else:
                     house_line = "Houses: N/A"
 
-                deaths = character.get("deaths") or []
+                deaths = (character.get('deaths') or character_wrapper.get('deaths') or data.get('deaths') or character_wrapper.get('deaths_records') or [])
                 deaths_text = ""
                 if isinstance(deaths, list) and deaths:
                     rows = []
@@ -452,7 +440,7 @@ class TibiaToolsApp(MDApp):
         scr = self.root.get_screen("training")
 
         if self._menu_skill is None:
-            skills = ["Sword", "Axe", "Club", "Distance", "Shielding", "Magic Level"]
+            skills = ["Sword", "Axe", "Club", "Distance", "Fist Fighting", "Shielding", "Magic Level"]
             self._menu_skill = MDDropdownMenu(
                 caller=scr.ids.skill_drop,
                 items=[{"text": s, "on_release": (lambda x=s: self._set_training_skill(x))} for s in skills],

@@ -37,32 +37,39 @@ RootSM:
                 text: "Char"
                 icon: "account-search"
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    padding: dp(12)
-                    spacing: dp(10)
+                MDScrollView:
+                    do_scroll_x: False
 
-                    MDTextField:
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        adaptive_height: True
+                        size_hint_y: None
+                        height: self.minimum_height
+                        padding: dp(12)
+                        spacing: dp(10)
+
+                        MDTextField:
                         id: char_name
                         hint_text: "Nome do personagem"
                         mode: "rectangle"
 
-                    MDRaisedButton:
+                        MDRaisedButton:
                         text: "Buscar"
                         on_release: app.search_character()
 
-                    MDRaisedButton:
+                        MDRaisedButton:
                         text: "Abrir no Tibia.com"
                         on_release: app.open_last_in_browser()
 
-                    MDRaisedButton:
+                        MDRaisedButton:
                         text: "Favoritar"
                         on_release: app.add_current_to_favorites()
 
-                    MDLabel:
+                        MDLabel:
                         id: char_status
                         text: "Faça uma busca."
                         halign: "left"
+                        text_size: self.width, None
                         valign: "top"
                         size_hint_y: None
                         height: self.texture_size[1] + dp(20)
@@ -72,10 +79,16 @@ RootSM:
                 text: "Share XP"
                 icon: "account-group"
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    padding: dp(12)
-                    spacing: dp(10)
+                MDScrollView:
+                    do_scroll_x: False
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        adaptive_height: True
+                        size_hint_y: None
+                        height: self.minimum_height
+                        padding: dp(12)
+                        spacing: dp(10)
 
                     MDLabel:
                         text: "Calculadora de Shared XP"

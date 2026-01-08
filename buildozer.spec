@@ -28,13 +28,11 @@ orientation = portrait
 # (str) Fullscreen mode (0 = not fullscreen)
 fullscreen = 0
 
-# (icone]
-icon.filename = assets/icon.png
-
 
 # --- ANDROID ---
 android.api = 33
 android.minapi = 24
+android.activity_attributes = android:windowSoftInputMode="adjustResize"
 android.ndk = 25b
 android.archs = arm64-v8a,armeabi-v7a
 
@@ -43,5 +41,3 @@ android.permissions = INTERNET
 
 # ✅ evita prompt interativo de licença no GitHub Actions
 android.accept_sdk_license = True
-# Keyboard behavior
-android.manifest.placeholders = android:windowSoftInputMode="adjustResize"
