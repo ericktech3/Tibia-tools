@@ -37,67 +37,85 @@ RootSM:
                 text: "Char"
                 icon: "account-search"
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    padding: dp(12)
-                    spacing: dp(10)
+                ScrollView:
+                    do_scroll_x: False
 
-                    MDTextField:
-                        id: char_name
-                        hint_text: "Nome do personagem"
-                        mode: "rectangle"
-
-                    MDRaisedButton:
-                        text: "Buscar"
-                        on_release: app.search_character()
-
-                    MDRaisedButton:
-                        text: "Abrir no Tibia.com"
-                        on_release: app.open_last_in_browser()
-
-                    MDRaisedButton:
-                        text: "Favoritar"
-                        on_release: app.add_current_to_favorites()
-
-                    MDLabel:
-                        id: char_status
-                        text: "Faça uma busca."
-                        halign: "left"
-                        valign: "top"
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(10)
                         size_hint_y: None
-                        height: self.texture_size[1] + dp(20)
+                        height: self.minimum_height
 
+                        MDTextField:
+                            id: char_name
+                            hint_text: "Nome do personagem"
+                            mode: "rectangle"
+
+                        MDRaisedButton:
+                            text: "Buscar"
+                            on_release: app.search_character()
+
+                        MDRaisedButton:
+                            text: "Abrir no Tibia.com"
+                            on_release: app.open_last_in_browser()
+
+                        MDRaisedButton:
+                            text: "Favoritar"
+                            on_release: app.add_current_to_favorites()
+
+                        MDLabel:
+                            id: char_status
+                            text: "Faça uma busca."
+                            halign: "left"
+                            valign: "top"
+                            size_hint_y: None
+                            height: self.texture_size[1] + dp(20)
+                            text_size: self.width, None
             MDBottomNavigationItem:
                 name: "tab_share"
                 text: "Share XP"
                 icon: "account-group"
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    padding: dp(12)
-                    spacing: dp(10)
+                ScrollView:
+                    do_scroll_x: False
 
-                    MDLabel:
-                        text: "Calculadora de Shared XP"
-                        bold: True
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(10)
                         size_hint_y: None
-                        height: self.texture_size[1] + dp(6)
+                        height: self.minimum_height
 
-                    MDTextField:
-                        id: share_level
-                        hint_text: "Seu level"
-                        mode: "rectangle"
-                        input_filter: "int"
+                        MDTextField:
+                            id: share_level
+                            hint_text: "Seu level"
+                            mode: "rectangle"
+                            input_filter: "int"
 
-                    MDRaisedButton:
-                        text: "Calcular"
-                        on_release: app.calc_shared_xp()
+                        MDRaisedButton:
+                            text: "Calcular"
+                            on_release: app.calc_shared_xp()
 
-                    MDLabel:
-                        id: share_result
-                        text: ""
-                        halign: "left"
-                        valign: "top"
+                        MDLabel:
+                            id: share_result
+                            text: "Digite um level e toque em Calcular."
+                            halign: "left"
+                            valign: "top"
+                            text_size: self.width, None
+                            size_hint_y: None
+                            height: self.texture_size[1] + dp(20)
+
+                        MDLabel:
+                            text: "Regra do share: menor >= 2/3 do maior (equivalente a: faixa = ceil(L*2/3) até floor(L*3/2))."
+                            theme_text_color: "Hint"
+                            halign: "left"
+                            text_size: self.width, None
+                            size_hint_y: None
+                            height: self.texture_size[1] + dp(10)
+
+
+
             MDBottomNavigationItem:
                 name: "tab_fav"
                 text: "Favoritos"
@@ -144,6 +162,13 @@ RootSM:
                             text: "Hunt Analyzer"
                             icon: "chart-bar"
                             on_release: app.open_more_target("hunt")
+                        MDSeparator:
+                            height: dp(1)
+
+                        OneLineListItem:
+                            text: "Criado por Monk Curandeiro"
+                            disabled: True
+
 
 
 <BossesScreen@MDScreen>:

@@ -11,9 +11,9 @@ import os
 import threading
 import webbrowser
 import traceback
-import math
 from typing import List, Optional
 
+from kivy.core.window import Window
 from kivy.lang import Builder
 from kivy.resources import resource_find
 from kivy.clock import Clock
@@ -62,6 +62,8 @@ class TibiaToolsApp(MDApp):
         self._menu_weapon: Optional[MDDropdownMenu] = None
 
     def build(self):
+        Window.softinput_mode = "below_target"
+        self.icon = "assets/icon.png"
         self.title = "Tibia Tools"
         self.theme_cls.primary_palette = "Blue"
         self.theme_cls.theme_style = "Dark"
@@ -139,112 +141,157 @@ class TibiaToolsApp(MDApp):
     # --------------------
     # Char tab
     # --------------------
-    def search_character(self):
-        home = self.root.get_screen("home")
-        name = (home.ids.char_name.text or "").strip()
-        if not name:
-            self.toast("Digite o nome do char.")
-            return
 
-        home.ids.char_status.text = "Buscando..."
-        home.char_last_url = ""
+def search_character(self):
+    home = self.root.get_screen("home")
+    name = (home.ids.char_name.text or "").strip()
+    if not name:
+        self.toast("Digite o nome do char.")
+        return
 
-        def worker():
-            try:
-                data = fetch_character_tibiadata(name)
-                if not data:
-                    raise ValueError("Sem resposta da API.")
-                character_wrapper = data.get("character", {})
-                character = character_wrapper.get("character", character_wrapper) if isinstance(character_wrapper, dict) else {}
-                url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
-                voc = character.get("vocation", "N/A")
-                level = character.get("level", "N/A")
-                world = character.get("world", "N/A")
+    home.ids.char_status.text = "Buscando..."
+    home.char_last_url = ""
 
-                # TibiaData nem sempre retorna "status" (online/offline) de forma confiável.
-                status = character.get("status") or ""
-                if not status or str(status).strip().upper() == "N/A":
-                    online = is_character_online_tibiadata(name, world) if world and world != "N/A" else None
-                    if online is True:
-                        status = "online"
-                    elif online is False:
-                        status = "offline"
-                    else:
-                        status = "N/A"
+    def worker():
+        try:
+            data = fetch_character_tibiadata(name)
+            if not data:
+                raise ValueError("Sem resposta da API.")
 
-                guild = character.get("guild") or {}
-                if isinstance(guild, dict) and guild.get("name"):
-                    gname = str(guild.get("name") or "").strip()
-                    grank = str(guild.get("rank") or guild.get("title") or "").strip()
-                    guild_line = f"Guild: {gname}{(' (' + grank + ')') if grank else ''}"
+            cw = data.get("character", {}) or {}
+            c = cw.get("character", {}) or {}
+
+            url = c.get("url") or ""
+
+            voc = c.get("vocation") or "N/A"
+            level = c.get("level") if c.get("level") is not None else "N/A"
+            world = c.get("world") or "N/A"
+
+            # Status pode vir direto do endpoint, mas nem sempre vem preenchido
+            status_raw = (c.get("status") or "").strip().lower()
+            if status_raw in ("online", "offline"):
+                status = status_raw
+            else:
+                online = None
+                if world and world != "N/A":
+                    online = is_character_online_tibiadata(name, world)
+                if online is True:
+                    status = "online"
+                elif online is False:
+                    status = "offline"
                 else:
-                    guild_line = "Guild: N/A"
+                    status = "N/A"
 
-                houses = character.get("houses") or []
-                if isinstance(houses, list):
-                    if not houses:
-                        house_line = "Houses: Nenhuma"
-                    else:
-                        parts = []
-                        for h in houses[:3]:
-                            if isinstance(h, dict):
-                                hn = str(h.get("name") or h.get("house") or "").strip()
-                                ht = str(h.get("town") or "").strip()
-                                if hn and ht:
-                                    parts.append(f"{hn} ({ht})")
-                                elif hn:
-                                    parts.append(hn)
-                            elif isinstance(h, str):
-                                parts.append(h.strip())
-                        parts = [p for p in parts if p]
-                        more = f" (+{len(houses) - len(parts)}...)" if len(houses) > len(parts) and parts else ""
-                        house_line = "Houses: " + (", ".join(parts) + more if parts else f"{len(houses)}")
-                else:
-                    house_line = "Houses: N/A"
+            # Guild
+            guild_txt = ""
+            g = c.get("guild")
+            if isinstance(g, dict):
+                gname = (g.get("name") or "").strip()
+                grank = (g.get("rank") or "").strip()
+                if gname and grank:
+                    guild_txt = f"{gname} ({grank})"
+                elif gname:
+                    guild_txt = gname
 
-                deaths = character.get("deaths") or []
-                deaths_text = ""
-                if isinstance(deaths, list) and deaths:
-                    rows = []
-                    for d in deaths[:5]:
-                        if not isinstance(d, dict):
-                            continue
-                        time_s = str(d.get("time") or d.get("date") or "").strip()
-                        lvl_s = str(d.get("level") or "").strip()
-                        reason_s = str(d.get("reason") or d.get("description") or "").strip()
-                        if reason_s:
-                            if lvl_s:
-                                rows.append(f"- {time_s} (lvl {lvl_s}): {reason_s}".strip())
-                            else:
-                                rows.append(f"- {time_s}: {reason_s}".strip())
-                    if rows:
-                        deaths_text = "\nÚltimas mortes:\n" + "\n".join(rows)
+            # Houses
+            houses_txt = ""
+            houses = c.get("houses") or []
+            if isinstance(houses, list) and houses:
+                parts = []
+                for h in houses:
+                    if not isinstance(h, dict):
+                        continue
+                    hname = (h.get("name") or "").strip()
+                    htown = (h.get("town") or h.get("location") or "").strip()
+                    if hname and htown:
+                        parts.append(f"{hname} ({htown})")
+                    elif hname:
+                        parts.append(hname)
+                if parts:
+                    houses_txt = "; ".join(parts)
 
-                result = (
-                    f"Status: {status}\n"
-                    f"Vocation: {voc}\n"
-                    f"Level: {level}\n"
-                    f"World: {world}\n"
-                    f"{guild_line}\n"
-                    f"{house_line}"
-                    f"{deaths_text}"
-                )
-                return True, result, url
-            except Exception as e:
-                return False, f"Erro: {e}", ""
+            # Últimas mortes
+            deaths = cw.get("deaths") or c.get("deaths") or data.get("deaths") or []
+            death_lines = []
+            if isinstance(deaths, list) and deaths:
+                for d in deaths[:5]:
+                    if not isinstance(d, dict):
+                        continue
+                    when = (d.get("time") or d.get("date") or "").strip()
+                    lvl = d.get("level")
+                    lvl_txt = f"lvl {lvl}" if lvl is not None else ""
+                    reason = (d.get("reason") or d.get("description") or "").strip()
 
-        def done(res):
-            ok, text, url = res
-            home.ids.char_status.text = text
-            home.char_last_url = url
-            if ok:
-                self.toast("Char encontrado.")
+                    involved = d.get("involved") or []
+                    killers = []
+                    if isinstance(involved, list):
+                        for inv in involved:
+                            if isinstance(inv, dict) and inv.get("name"):
+                                killers.append(inv["name"])
+                            elif isinstance(inv, str):
+                                killers.append(inv)
+                    if killers and reason and "by" not in reason.lower():
+                        reason = f"{reason} (by {', '.join(killers)})"
 
-        def run():
-            res = worker()
-            Clock.schedule_once(lambda *_: done(res), 0)
+                    line = f"- {when} {lvl_txt} {reason}".strip()
+                    death_lines.append(line)
 
-        threading.Thread(target=run, daemon=True).start()
+            result_lines = [
+                f"Status: {status}",
+                f"Vocation: {voc}",
+                f"Level: {level}",
+                f"World: {world}",
+            ]
+            if guild_txt:
+                result_lines.append(f"Guild: {guild_txt}")
+            if houses_txt:
+                result_lines.append(f"Houses: {houses_txt}")
+            if death_lines:
+                result_lines.append("Últimas mortes:")
+                result_lines.extend(death_lines)
+
+            return True, "\n".join(result_lines), url
+        except Exception as e:
+            return False, f"Erro: {e}", ""
+
+    def done(res):
+        ok, text, url = res
+        home.ids.char_status.text = text
+        home.char_last_url = url
+        if ok:
+            self.toast("Char encontrado.")
+
+    def run():
+        res = worker()
+        Clock.schedule_once(lambda *_: done(res), 0)
+
+    threading.Thread(target=run, daemon=True).start()
+
+def calc_shared_xp(self):
+    home = self.root.get_screen("home")
+    txt = (home.ids.share_level.text or "").strip()
+    if not txt:
+        home.ids.share_result.text = "Digite um level."
+        return
+    try:
+        lvl = int(txt)
+        if lvl <= 0:
+            raise ValueError
+    except Exception:
+        home.ids.share_result.text = "Level inválido."
+        return
+
+    # Regra oficial: menor >= 2/3 do maior
+    # Para um level L, a faixa que consegue sharear é:
+    # ceil(L*2/3) até floor(L*3/2)
+    import math
+    min_lvl = math.ceil(lvl * 2 / 3)
+    max_lvl = math.floor(lvl * 3 / 2)
+
+    home.ids.share_result.text = (
+        f"Para o level {lvl}, dá para sharear com levels\n"
+        f"de {min_lvl} até {max_lvl}."
+    )
 
     def open_last_in_browser(self):
         home = self.root.get_screen("home")
@@ -313,32 +360,10 @@ class TibiaToolsApp(MDApp):
         )
         dlg.open()
 
-        # --------------------
-    # Shared XP tab
     # --------------------
-    def calc_shared_xp(self):
-        home = self.root.get_screen("home")
-        try:
-            level = int((home.ids.share_level.text or "0").strip())
-        except ValueError:
-            self.toast("Digite um level válido.")
-            return
 
-        if level <= 0:
-            self.toast("Digite um level maior que 0.")
-            return
 
-        # Regra do Tibia (party shared XP):
-        # Se você é level L, pode sharear com levels entre:
-        #   ceil(2/3 * L)  e  floor(3/2 * L)
-        min_level = int(math.ceil(level * 2.0 / 3.0))
-        max_level = int(math.floor(level * 3.0 / 2.0))
-
-        home.ids.share_result.text = (
-            f"Seu level: {level}\n"
-            f"Pode sharear com: {min_level} até {max_level}"
-        )
-# --------------------
+    # --------------------
     # Bosses (ExevoPan)
     # --------------------
     def _bosses_refresh_worlds(self):
@@ -438,7 +463,7 @@ class TibiaToolsApp(MDApp):
         scr = self.root.get_screen("training")
 
         if self._menu_skill is None:
-            skills = ["Sword", "Axe", "Club", "Distance", "Shielding", "Magic Level"]
+            skills = ["Sword", "Axe", "Club", "Distance", "Shielding", "Magic Level", "Fist Fighting"]
             self._menu_skill = MDDropdownMenu(
                 caller=scr.ids.skill_drop,
                 items=[{"text": s, "on_release": (lambda x=s: self._set_training_skill(x))} for s in skills],
