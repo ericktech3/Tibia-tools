@@ -103,7 +103,7 @@ def _parse_bosses_from_text(html: str) -> List[Dict[str, str]]:
     text = re.sub(r"\s+", " ", text).strip()
 
     # padrões comuns no ExevoPan
-    chance_re = r"(No chance|Unknown|Low chance|Medium chance|High chance)"
+    chance_re = r"(\d{1,3}%|No chance|Unknown|Low chance|Medium chance|High chance)"
     pat = re.compile(rf"([A-Z][A-Za-z'’\- ]{{2,60}}?)\s+{chance_re}\b", re.U)
 
     out: List[Dict[str, str]] = []
@@ -127,6 +127,61 @@ def _parse_bosses_from_text(html: str) -> List[Dict[str, str]]:
         uniq.append(b)
     return uniq
 
+
+def _normalize_chance(it: Dict[str, Any]) -> str:
+    """Normaliza o campo de chance.
+    - Se vier número: converte para % (0-1 -> 0-100%).
+    - Se vier dict: tenta extrair 'text'/'label'/'percent'/'value'.
+    - Se vier string com '%': mantém.
+    """
+    val = (
+        it.get("spawnChance")
+        or it.get("spawn_chance")
+        or it.get("chancePercent")
+        or it.get("chance_percent")
+        or it.get("percentage")
+        or it.get("percent")
+        or it.get("probability")
+        or it.get("chanceText")
+        or it.get("chance_text")
+        or it.get("chance")
+        or ""
+    )
+    # dict
+    if isinstance(val, dict):
+        for k in ("text", "label", "name", "value", "percent", "percentage"):
+            if k in val and val[k] not in (None, ""):
+                val = val[k]
+                break
+    # number
+    if isinstance(val, (int, float)):
+        n = float(val)
+        if 0 <= n <= 1:
+            return f"{int(round(n * 100))}%"
+        if 0 < n <= 100:
+            return f"{int(round(n))}%"
+        return str(val)
+    # string
+    s = str(val).strip()
+    if not s:
+        return ""
+    # if looks like 0.23
+    m = re.fullmatch(r"\d+(?:\.\d+)?", s)
+    if m:
+        try:
+            n = float(s)
+            if 0 <= n <= 1:
+                return f"{int(round(n * 100))}%"
+            if 0 < n <= 100:
+                return f"{int(round(n))}%"
+        except Exception:
+            pass
+    # keep percentage
+    if "%" in s:
+        return s
+    # unify common strings
+    s2 = s.replace("Chance", "chance").strip()
+    return s2
 
 def fetch_exevopan_bosses(world: str, timeout: int = 20) -> List[Dict[str, str]]:
     """Busca bosses do ExevoPan para um world.
@@ -160,8 +215,8 @@ def fetch_exevopan_bosses(world: str, timeout: int = 20) -> List[Dict[str, str]]
                         name = name.get("name") or name.get("title")
                     if not name:
                         continue
-                    chance = it.get("chance") or it.get("probability") or it.get("chanceText") or it.get("chance_text") or ""
-                    status = it.get("status") or it.get("time") or it.get("expected") or ""
+                    chance = _normalize_chance(it)
+                    status = it.get('status') or it.get('state') or it.get('time') or it.get('expected') or it.get('eta') or it.get('nextSpawn') or ''
                     out.append({"boss": str(name), "chance": str(chance), "status": str(status)})
     except Exception:
         out = []
