@@ -23,7 +23,7 @@ version = 0.1.0
 
 # (list) Application requirements
 # ✅ trava o KivyMD na versão compatível com MDBottomNavigation etc.
-requirements = python3,kivy,kivymd==1.2.0,requests,urllib3,idna,charset_normalizer,chardet,certifi,beautifulsoup4,soupsieve,typing_extensions
+requirements = python3,kivy,kivymd==1.2.0,requests,urllib3,idna,charset-normalizer,chardet,certifi,beautifulsoup4,soupsieve,typing_extensions
 
 # (str) Supported orientation (one of landscape, portrait or all)
 orientation = portrait
@@ -42,7 +42,7 @@ android.archs = arm64-v8a,armeabi-v7a
 android.permissions = INTERNET
 
 # Ajusta a tela quando o teclado abre (evita sobrepor o campo)
-android.add_manifest_activity_attributes = android:windowSoftInputMode=\"adjustResize\"
+android.add_manifest_activity_attributes = android:windowSoftInputMode="adjustResize"
 
 # ✅ evita prompt interativo de licença no GitHub Actions
 android.accept_sdk_license = True

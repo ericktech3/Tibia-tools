@@ -28,12 +28,16 @@ from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
 from kivymd.uix.menu import MDDropdownMenu
 
 from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata, is_character_online_tibiadata
-from core.storage import get_data_dir, safe_read_json, safe_write_json
-from core.bosses import fetch_exevopan_bosses
-from core.boosted import fetch_boosted
-from core.training import TrainingInput, compute_training_plan
-from core.hunt import parse_hunt_session_text
-from core.imbuements import fetch_imbuements_table, ImbuementEntry
+CORE_IMPORT_ERROR = None
+try:
+    from core.storage import get_data_dir, safe_read_json, safe_write_json
+    from core.bosses import fetch_exevopan_bosses
+    from core.boosted import fetch_boosted
+    from core.training import TrainingInput, compute_training_plan
+    from core.hunt import parse_hunt_session_text
+    from core.imbuements import fetch_imbuements_table, ImbuementEntry
+except Exception:
+    CORE_IMPORT_ERROR = traceback.format_exc()
 
 
 KV_FILE = "tibia_tools.kv"
@@ -62,6 +66,12 @@ class TibiaToolsApp(MDApp):
         self._menu_weapon: Optional[MDDropdownMenu] = None
 
     def build(self):
+        if CORE_IMPORT_ERROR:
+            from kivymd.uix.label import MDLabel
+            # Mostra o erro na tela (sem precisar de logcat)
+            txt = CORE_IMPORT_ERROR[-2000:]
+            return MDLabel(text="Erro de dependência/import:\n\n"+txt, halign="left")
+
         Window.softinput_mode = "below_target"
         self.icon = "assets/icon.png"
         self.title = "Tibia Tools"
