@@ -36,7 +36,7 @@ try:
     from core.boosted import fetch_boosted
     from core.training import TrainingInput, compute_training_plan
     from core.hunt import parse_hunt_session_text
-    from core.imbuements import fetch_imbuements_table, ImbuementEntry
+    from core.imbuements import fetch_imbuements_table, fetch_imbuement_details, ImbuementEntry
 except Exception:
     _CORE_IMPORT_ERROR = traceback.format_exc()
 
@@ -627,14 +627,43 @@ class TibiaToolsApp(MDApp):
             scr.ids.imb_list.add_widget(item)
 
     def _imbu_show(self, ent: ImbuementEntry):
-        text = f"Basic:\n{ent.basic}\n\nIntricate:\n{ent.intricate}\n\nPowerful:\n{ent.powerful}\n\n(Fonte: TibiaWiki)"
+        scr = self.root.get_screen("imbuements")
+        scr.ids.imb_status.text = "Carregando itens..."
+
+        def run():
+            ok, details = fetch_imbuement_details(ent.page)
+            Clock.schedule_once(lambda *_: self._imbu_show_done(ent, ok, details), 0)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _imbu_show_done(self, ent: ImbuementEntry, ok: bool, details):
+        scr = self.root.get_screen("imbuements")
+        scr.ids.imb_status.text = ""
+
+        parts = []
+        parts.append(f"Basic: {ent.basic}")
+        parts.append(f"Intricate: {ent.intricate}")
+        parts.append(f"Powerful: {ent.powerful}")
+
+        if ok and isinstance(details, dict):
+            def fmt(tier: str) -> str:
+                items = details.get(tier, []) or []
+                if not items:
+                    return f"{tier} itens: (não encontrado)"
+                return tier + " itens:\n" + "\n".join([f"• {x}" for x in items])
+
+            items_txt = "\n\n".join([fmt("Basic"), fmt("Intricate"), fmt("Powerful")])
+        else:
+            items_txt = "Itens necessários: (não encontrado)"
+
+        text = ("\n".join(parts) + "\n\n" + items_txt + "\n\n(Fonte: TibiaWiki BR)")
+
         dlg = MDDialog(
             title=ent.name,
             text=text,
             buttons=[MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())],
         )
         dlg.open()
-
 
 if __name__ == "__main__":
     TibiaToolsApp().run()
