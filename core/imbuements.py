@@ -2,242 +2,228 @@
 """
 Imbuements (TibiaWiki BR)
 
-Este módulo usa a página JSON mantida na TibiaWiki (MediaWiki), evitando scraping de HTML
-(que frequentemente retorna 403). Ele expõe duas funções usadas pelo app:
+⚠️ Importante: este módulo PRECISA ser importável no Android.
+Por isso:
+- não usa sintaxe nova (PEP604 |, list[str], etc.)
+- não faz requests no import (rede só dentro das funções)
+- expõe ImbuementEntry + fetch_imbuements_table (como o main.py espera)
 
-- fetch_imbuements_table() -> (ok, list[dict])
-- fetch_imbuement_details(title_or_page) -> (ok, dict)
-
-Compatível com Python 3.10 (p4a).
+Fonte preferencial:
+- JSON oficial da TibiaWiki BR: Tibia_Wiki:Imbuements/json (action=raw)
 """
 
 import json
 import re
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-BASE_URL = "https://www.tibiawiki.com.br"
-JSON_TITLE = "Tibia_Wiki:Imbuements/json"
+# Endpoints (tenta com e sem www)
+_IMBUEMENTS_JSON_URLS = [
+    "https://www.tibiawiki.com.br/index.php?title=Tibia_Wiki:Imbuements/json&action=raw",
+    "https://tibiawiki.com.br/index.php?title=Tibia_Wiki:Imbuements/json&action=raw",
+]
 
 _HEADERS = {
-    # Um UA de navegador reduz chances de 403/WAF.
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-    "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://www.tibiawiki.com.br/",
-    "Connection": "keep-alive",
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 13; Mobile) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Mobile Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
 
-_DB_CACHE: Optional[Dict[str, Any]] = None
-_DB_ERROR: Optional[str] = None
+# Cache simples em memória (evita baixar 2x)
+_CACHE_DATA = None  # type: Optional[Dict[str, Any]]
 
 
-def _http_get(url: str, params: Optional[Dict[str, str]] = None) -> str:
-    # Import local para evitar falha de import caso requests não esteja disponível em algum build.
-    import requests  # type: ignore
-
-    resp = requests.get(url, params=params, headers=_HEADERS, timeout=25)
-    resp.raise_for_status()
-    # A TibiaWiki geralmente usa UTF-8
-    resp.encoding = resp.encoding or "utf-8"
-    return resp.text
+class ImbuementEntry(object):
+    def __init__(self, name, basic="", intricate="", powerful=""):
+        self.name = name
+        self.basic = basic
+        self.intricate = intricate
+        self.powerful = powerful
 
 
-def _extract_json_from_html(html: str) -> str:
-    """
-    Fallback: extrai o JSON de uma página HTML (normalmente dentro de <pre>).
-    """
-    m = re.search(r"<pre[^>]*>(.*?)</pre>", html, flags=re.I | re.S)
-    payload = m.group(1) if m else html
+def _extract_json(payload_text):
+    t = (payload_text or "").strip()
+    t = t.lstrip("\ufeff")  # remove BOM
 
-    # Remover tags residuais e des-escapar entidades mais comuns.
-    payload = re.sub(r"<[^>]+>", "", payload)
-    payload = payload.replace("&quot;", '"').replace("&#34;", '"')
-    payload = payload.replace("&amp;", "&").replace("&#38;", "&")
-    payload = payload.replace("&#039;", "'").replace("&lt;", "<").replace("&gt;", ">")
+    # Caso venha JSON puro
+    if t.startswith("{") and t.endswith("}"):
+        return json.loads(t)
 
-    payload = payload.strip()
-    # Recortar do primeiro { ao último } para evitar lixo.
-    a = payload.find("{")
-    b = payload.rfind("}")
-    if a != -1 and b != -1 and b > a:
-        payload = payload[a:b + 1]
-    return payload
+    # Caso venha HTML com JSON dentro de <pre> ... </pre>
+    m = re.search(r"<pre[^>]*>(.*?)</pre>", t, flags=re.I | re.S)
+    if m:
+        inner = m.group(1).strip().lstrip("\ufeff")
+        return json.loads(inner)
+
+    # Último recurso: tenta pegar o maior bloco {...}
+    m = re.search(r"(\{.*\})\s*$", t, flags=re.S)
+    if m:
+        return json.loads(m.group(1))
+
+    raise ValueError("Resposta não contém JSON válido.")
 
 
-def _load_db() -> Tuple[bool, Any]:
-    """
-    Carrega e cacheia o banco JSON de imbuements.
+def _tier_text(tier_obj):
+    if not isinstance(tier_obj, dict):
+        return "-"
 
-    Retorna:
-      (True, dict) em caso de sucesso
-      (False, str) em caso de erro
-    """
-    global _DB_CACHE, _DB_ERROR
-
-    if _DB_CACHE is not None:
-        return True, _DB_CACHE
-    if _DB_ERROR is not None:
-        return False, _DB_ERROR
-
-    e1 = e2 = e3 = None
-
-    # 1) MediaWiki API (preferido)
-    try:
-        api_text = _http_get(
-            f"{BASE_URL}/api.php",
-            params={
-                "action": "query",
-                "prop": "revisions",
-                "titles": JSON_TITLE,
-                "rvprop": "content",
-                "rvslots": "main",
-                "format": "json",
-                "formatversion": "2",
-            },
-        )
-        api_json = json.loads(api_text)
-        page = (api_json.get("query", {}).get("pages") or [{}])[0]
-        rev = (page.get("revisions") or [{}])[0]
-        slots = rev.get("slots") or {}
-        content = (slots.get("main") or {}).get("content") or ""
-        db = json.loads(content)
-        if isinstance(db, dict) and db:
-            _DB_CACHE = db
-            return True, db
-        raise ValueError("Conteúdo JSON vazio/inesperado (API).")
-    except Exception as ex:
-        e1 = ex
-
-    # 2) action=raw (alternativa)
-    try:
-        raw_text = _http_get(
-            f"{BASE_URL}/index.php",
-            params={"title": JSON_TITLE, "action": "raw"},
-        )
-        db = json.loads(raw_text)
-        if isinstance(db, dict) and db:
-            _DB_CACHE = db
-            return True, db
-        raise ValueError("Conteúdo JSON vazio/inesperado (raw).")
-    except Exception as ex:
-        e2 = ex
-
-    # 3) Página HTML + extração (último recurso)
-    try:
-        html = _http_get(f"{BASE_URL}/wiki/{JSON_TITLE}")
-        json_text = _extract_json_from_html(html)
-        db = json.loads(json_text)
-        if isinstance(db, dict) and db:
-            _DB_CACHE = db
-            return True, db
-        raise ValueError("Conteúdo JSON vazio/inesperado (html).")
-    except Exception as ex:
-        e3 = ex
-
-    _DB_ERROR = (
-        "Não foi possível carregar os Imbuements da TibiaWiki.\n"
-        f"1) API: {e1}\n"
-        f"2) RAW: {e2}\n"
-        f"3) HTML: {e3}"
+    # Variações possíveis de campo
+    effect = (
+        tier_obj.get("effect")
+        or tier_obj.get("description")
+        or tier_obj.get("Efeito")
+        or tier_obj.get("Descrição")
+        or ""
     )
-    return False, _DB_ERROR
+    effect = (effect or "").strip()
+
+    items = tier_obj.get("items")
+    if items is None:
+        items = tier_obj.get("itens")
+    if items is None:
+        items = tier_obj.get("Itens")
+    if items is None:
+        items = []
+
+    lines = []  # type: List[str]
+    if isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict):
+                nm = (it.get("name") or it.get("nome") or it.get("item") or "").strip()
+                qty = it.get("quantity") or it.get("quantidade") or it.get("qtd") or ""
+                qty = str(qty).strip()
+                if nm and qty and qty != "0":
+                    lines.append("- %sx %s" % (qty, nm))
+                elif nm:
+                    lines.append("- %s" % nm)
+            elif isinstance(it, str):
+                s = it.strip()
+                if s:
+                    lines.append("- %s" % s)
+
+    if lines:
+        if effect:
+            return effect + "\n" + "\n".join(lines)
+        return "\n".join(lines)
+
+    return effect or "-"
 
 
-def fetch_imbuements_table() -> Tuple[bool, Any]:
-    """
-    Retorna a lista principal para a aba:
-      ok=True  -> lista de dicts com pelo menos {"title": <nome>}
-      ok=False -> mensagem de erro (str)
-    """
-    ok, db = _load_db()
-    if not ok:
-        return False, db
+def _normalize_key(s):
+    s = (s or "").strip()
+    s = s.replace("\u00a0", " ")
+    s = re.sub(r"\s+", " ", s)
+    return s.lower()
 
-    entries: List[Dict[str, Any]] = []
-    for title, info in db.items():
-        if not isinstance(title, str):
+
+def _load_json():
+    global _CACHE_DATA
+
+    if _CACHE_DATA is not None:
+        return True, _CACHE_DATA
+
+    try:
+        import requests  # import local para não quebrar o app no boot
+    except Exception as e:
+        return False, "requests não disponível: %s" % e
+
+    last_err = None
+    sess = requests.Session()
+    sess.headers.update(_HEADERS)
+
+    # “aquecimento” (às vezes libera WAF/cookies)
+    try:
+        sess.get("https://www.tibiawiki.com.br/", timeout=10)
+    except Exception:
+        pass
+
+    for url in _IMBUEMENTS_JSON_URLS:
+        try:
+            r = sess.get(url, timeout=20)
+            if r.status_code == 403:
+                # tenta mais uma vez (cookies)
+                r = sess.get(url, timeout=20)
+
+            if r.status_code >= 400:
+                last_err = "%s Client Error: %s" % (r.status_code, url)
+                continue
+
+            data = _extract_json(r.text)
+            if not isinstance(data, dict):
+                last_err = "JSON inválido (não é objeto)."
+                continue
+
+            _CACHE_DATA = data
+            return True, data
+        except Exception as e:
+            last_err = str(e)
             continue
-        if not isinstance(info, dict):
-            info = {}
-        entries.append(
-            {
-                "title": title,
-                "name": info.get("name", ""),
-                "gold_token": bool(info.get("gold_token", False)),
-            }
-        )
 
-    entries.sort(key=lambda x: x.get("title", "").lower())
-    return True, entries
+    return False, (last_err or "Falha ao carregar JSON do TibiaWiki.")
 
 
-def _find_entry(db: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
-    if key in db and isinstance(db[key], dict):
-        return db[key]
-    # fallback case-insensitive
-    lk = key.lower()
-    for k, v in db.items():
-        if isinstance(k, str) and k.lower() == lk and isinstance(v, dict):
-            return v
-    return None
-
-
-def fetch_imbuement_details(title_or_page: str) -> Tuple[bool, Any]:
+def fetch_imbuements_table():
     """
-    Retorna detalhes para o popup (Basic/Intricate/Powerful).
-
-    Saída esperada pelo main.py:
-      ok=True -> dict {
-        "basic": {"effect": str, "items": [str, ...]},
-        "intricate": {...},
-        "powerful": {...},
-      }
+    Retorna (ok, lista_de_ImbuementEntry) ou (False, mensagem).
+    A lista vem completa (ex.: ~24).
     """
-    ok, db = _load_db()
+    ok, data = _load_json()
     if not ok:
-        return False, db
+        return False, data
 
-    key = (title_or_page or "").replace("_", " ").strip()
-    if not key:
-        return False, "Imbuement inválido."
+    out = []  # type: List[ImbuementEntry]
+    for name, obj in data.items():
+        if not isinstance(obj, dict):
+            continue
 
-    entry = _find_entry(db, key)
-    if not entry:
-        return False, f"Imbuement não encontrado: {key}"
+        level = obj.get("level")
+        if not isinstance(level, dict):
+            level = {}
 
-    def parse_tier(tier_label: str) -> Dict[str, Any]:
-        tier = entry.get(tier_label) or {}
-        if not isinstance(tier, dict):
-            tier = {}
+        basic = _tier_text(level.get("Basic") or level.get("basic") or {})
+        intricate = _tier_text(level.get("Intricate") or level.get("intricate") or {})
+        powerful = _tier_text(level.get("Powerful") or level.get("powerful") or {})
 
-        effect = (tier.get("description") or tier.get("effect") or "").strip()
+        out.append(ImbuementEntry(str(name), basic, intricate, powerful))
 
-        items_out: List[str] = []
-        raw_items = tier.get("itens") or tier.get("items") or []
-        if isinstance(raw_items, list):
-            for it in raw_items:
-                if isinstance(it, dict):
-                    nm = (it.get("name") or it.get("nome") or "").strip()
-                    qty = it.get("quantity")
-                    if qty is None:
-                        qty = it.get("quantidade")
-                    if qty is None:
-                        qty = it.get("amount")
-                    if nm and qty is not None and str(qty).strip() != "":
-                        items_out.append(f"{nm} x{qty}")
-                    elif nm:
-                        items_out.append(nm)
-                elif isinstance(it, str):
-                    s = it.strip()
-                    if s:
-                        items_out.append(s)
+    out.sort(key=lambda e: (e.name or "").lower())
+    if not out:
+        return False, "Não foi possível extrair a lista de imbuements."
+    return True, out
 
-        return {"effect": effect, "items": items_out}
+
+def fetch_imbuement_details(title_or_page):
+    """
+    Mantido por compatibilidade: devolve (ok, dict com basic/intricate/powerful)
+    """
+    ok, data = _load_json()
+    if not ok:
+        return False, data
+
+    target = _normalize_key(title_or_page)
+
+    # tenta achar por chave direta (case-insensitive)
+    picked = None
+    for name, obj in data.items():
+        if _normalize_key(str(name)) == target:
+            picked = obj
+            break
+
+    if not isinstance(picked, dict):
+        return False, "Imbuement não encontrado: %s" % title_or_page
+
+    level = picked.get("level")
+    if not isinstance(level, dict):
+        level = {}
 
     details = {
-        "basic": parse_tier("Basic"),
-        "intricate": parse_tier("Intricate"),
-        "powerful": parse_tier("Powerful"),
+        "basic": _tier_text(level.get("Basic") or level.get("basic") or {}),
+        "intricate": _tier_text(level.get("Intricate") or level.get("intricate") or {}),
+        "powerful": _tier_text(level.get("Powerful") or level.get("powerful") or {}),
     }
     return True, details
