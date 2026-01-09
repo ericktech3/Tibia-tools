@@ -462,7 +462,7 @@ class TibiaToolsApp(MDApp):
 
         if 'voc_drop' in scr.ids and 'voc_field' in scr.ids:
             if self._menu_vocation is None:
-                vocs = ["Knight", "Paladin", "Druid/Sorcerer", "None"]
+                vocs = ["Knight", "Paladin", "Sorcerer", "Druid", "Monk", "None"]
                 self._menu_vocation = MDDropdownMenu(
                     caller=scr.ids.voc_drop,
                     items=[{"text": v, "on_release": (lambda x=v: self._set_training_voc(x))} for v in vocs],
@@ -507,6 +507,8 @@ class TibiaToolsApp(MDApp):
         try:
             frm = int((scr.ids.from_level.text or "").strip())
             to = int((scr.ids.to_level.text or "").strip())
+            pct_w = scr.ids.get("percent_left")
+            pct = float(((pct_w.text if pct_w else "100") or "100").replace(",", ".").strip() or 100)
             loyalty = float((scr.ids.loyalty.text or "0").replace(",", ".").strip() or 0)
         except ValueError:
             self.toast("Verifique os campos numéricos.")
@@ -520,7 +522,7 @@ class TibiaToolsApp(MDApp):
 
         if "voc_field" not in scr.ids:
             if skill == "Magic Level":
-                voc = "Mage"
+                voc = "Sorcerer"
             elif skill == "Distance":
                 voc = "Paladin"
             else:
@@ -532,6 +534,7 @@ class TibiaToolsApp(MDApp):
             from_level=frm,
             to_level=to,
             weapon_kind=weapon,
+            percent_left=pct,
             loyalty_percent=loyalty,
             private_dummy=scr.ids.private_dummy.active,
             double_event=scr.ids.double_event.active,
