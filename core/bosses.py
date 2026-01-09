@@ -72,19 +72,27 @@ _PERCENT_RE = re.compile(r"^\d{1,3}(?:[.,]\d{1,2})?%$")
 
 
 def _html_to_text_keep_lines(html: str) -> str:
-    """Converte HTML em texto preservando quebras de linha úteis."""
+    """Converte HTML em texto preservando quebras de linha úteis.
+
+    A ideia aqui é NÃO depender de estrutura/campos internos do Next.js, e sim
+    ler o texto que o site já renderiza (boss name + % / sem chance + previsão).
+    """
+    # remove scripts/styles pra reduzir ruído
     cleaned = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.I | re.S)
     cleaned = re.sub(r"<style\b[^>]*>.*?</style>", "", cleaned, flags=re.I | re.S)
 
-    # marca headings como "#### " para facilitar parse
+    # marca headings como "#### " para facilitar parse (similar ao que o site gera)
     cleaned = re.sub(r"<h[1-6]\b[^>]*>", "\n#### ", cleaned, flags=re.I)
     cleaned = re.sub(r"</h[1-6]>", "\n", cleaned, flags=re.I)
 
+    # tags que naturalmente quebram linha
     cleaned = re.sub(r"<br\s*/?>", "\n", cleaned, flags=re.I)
     cleaned = re.sub(r"</(p|div|li|tr|td|th|section|article|ul|ol)>", "\n", cleaned, flags=re.I)
 
+    # remove o resto das tags
     text = re.sub(r"<[^>]+>", " ", cleaned)
 
+    # normaliza espaços, mas mantém \n
     text = text.replace("\r", "\n")
     text = re.sub(r"[ \t\f\v]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -109,14 +117,49 @@ def _normalize_expected(s: str) -> str:
 
 
 def _parse_value_line(value_line: str) -> Tuple[str, str]:
+    """Recebe a linha de valor (chance/status) e devolve (chance, status).
+
+    Regras:
+    - Chance válida: percentual (com decimal), "No chance", "Unknown", "Low/Medium/High chance" (EN/PT básico)
+    - Expected pode vir junto (mesma linha) ou sozinho em linha separada ("Expected in:" / "Aparecerá em:")
+    - Se não reconhecer, retorna ("", "") para evitar capturar itens do menu do site.
+    """
     raw = (value_line or "").strip()
     if not raw:
         return "", ""
 
-    if raw.lower() in {"unknown", "desconhecido"}:
+    # Expected sozinho (linha separada)
+    exp_only = re.search(
+        r"(?:Expected in:|Aparecerá em:|Aparecera em:)\s*\d+\s*(?:day|days|hour|hours|minute|minutes|dia|dias|hora|horas|minuto|minutos)",
+        raw,
+        flags=re.I,
+    )
+    if exp_only and raw.lower().startswith(("expected in:", "aparecerá em:", "aparecera em:")):
+        return "", _normalize_expected(raw)
+
+    low = raw.lower()
+
+    # Unknown (EN/PT)
+    if low in {"unknown", "desconhecido"}:
         return "Unknown", ""
 
-    if raw.lower().startswith("sem chance") or raw.lower().startswith("no chance"):
+    # Outros níveis (às vezes o ExevoPan usa texto em vez de %)
+    chance_map = {
+        "low chance": "Low chance",
+        "medium chance": "Medium chance",
+        "high chance": "High chance",
+        "very high chance": "Very high chance",
+        "baixa chance": "Low chance",
+        "média chance": "Medium chance",
+        "media chance": "Medium chance",
+        "alta chance": "High chance",
+        "muito alta chance": "Very high chance",
+    }
+    if low in chance_map:
+        return chance_map[low], ""
+
+    # Sem chance / No chance (+ previsão opcional)
+    if low.startswith("sem chance") or low.startswith("no chance"):
         chance = "No chance"
         expected = ""
 
@@ -139,38 +182,92 @@ def _parse_value_line(value_line: str) -> Tuple[str, str]:
         expected = _normalize_expected(expected)
         return chance, expected
 
+    # Percentual (aceita decimal)
     if _PERCENT_RE.match(raw.replace(",", ".")):
         return raw.replace(",", "."), ""
 
+    # fallback: tenta achar um percentual dentro da linha
     m = re.search(r"(\d{1,3}(?:[.,]\d{1,2})?%)", raw)
     if m:
         return m.group(1).replace(",", "."), ""
 
-    return raw, ""
+    # Não reconhecido -> descarta (evita menu/rodapé)
+    return "", ""
 
 
 def _parse_bosses_from_rendered_text(html: str) -> List[Dict[str, str]]:
+    """Extrai bosses do HTML renderizado.
+
+    Estratégia:
+    1) Converte HTML -> texto com linhas.
+    2) Procura padrões por linha:
+       - "Boss Name - 73.99%" ou "Boss Name - No chance"
+       - Expected pode vir na mesma linha ou na linha seguinte
+    3) Fallback: headings (####) + próxima linha.
+    """
     txt = _html_to_text_keep_lines(html)
-    lines = [ln.strip() for ln in txt.split("\n")]
-    lines = [ln for ln in lines if ln and ln.lower() not in {"chance", "última vez visto", "last seen"}]
+    lines = [ln.strip() for ln in txt.split("\n") if ln.strip()]
 
     out: List[Dict[str, str]] = []
-    i = 0
-    while i < len(lines):
-        ln = lines[i]
-        if ln.startswith("#### "):
-            boss = ln.replace("#### ", "", 1).strip()
-            j = i + 1
-            while j < len(lines) and not lines[j]:
-                j += 1
-            if j < len(lines):
-                chance, status = _parse_value_line(lines[j])
-                if boss and 3 <= len(boss) <= 80:
-                    out.append({"boss": boss, "chance": chance, "status": status})
-                    i = j + 1
-                    continue
-        i += 1
 
+    # 1) Padrão direto: "Boss - chance ..."
+    percent = r"\d{1,3}(?:[\.,]\d{1,2})?%"
+    chance_words = r"No chance|Unknown|Low chance|Medium chance|High chance|Very high chance|Sem chance|Desconhecido"
+    expected = (
+        r"(?:Expected in:|Aparecerá em:|Aparecera em:)\s*\d+\s*(?:day|days|hour|hours|minute|minutes|dia|dias|hora|horas|minuto|minutos)"
+    )
+    line_re = re.compile(
+        rf"^(?P<boss>[^#\-].{{3,120}}?)\s*-\s*(?P<chance>(?:{percent}|{chance_words}))\b(?:\s+(?P<expected>{expected}))?$",
+        flags=re.I,
+    )
+
+    for i, ln in enumerate(lines):
+        m = line_re.match(ln)
+        if not m:
+            continue
+        boss = m.group("boss").strip(" -")
+        chance_raw = (m.group("chance") or "").strip()
+        exp_raw = (m.group("expected") or "").strip()
+        chance, _ = _parse_value_line(chance_raw)
+        status = _normalize_expected(exp_raw)
+
+        # expected pode estar na linha seguinte
+        if not status and i + 1 < len(lines):
+            ch2, st2 = _parse_value_line(lines[i + 1])
+            if ch2 == "" and st2:
+                status = st2
+
+        if chance:
+            out.append({"boss": boss, "chance": chance, "status": status})
+
+    # 2) Fallback: headings (####) + próxima linha
+    if not out:
+        i = 0
+        while i < len(lines):
+            ln = lines[i]
+            if ln.startswith("#### "):
+                boss = ln.replace("#### ", "", 1).strip()
+                # próxima linha não vazia
+                j = i + 1
+                while j < len(lines) and not lines[j]:
+                    j += 1
+                if j < len(lines):
+                    chance, status = _parse_value_line(lines[j])
+
+                    # expected pode estar na linha seguinte (em coluna separada)
+                    if chance and not status and j + 1 < len(lines):
+                        ch2, st2 = _parse_value_line(lines[j + 1])
+                        if ch2 == "" and st2:
+                            status = st2
+
+                    # só aceita se chance reconhecida
+                    if chance:
+                        out.append({"boss": boss, "chance": chance, "status": status})
+                        i = j + 1
+                        continue
+            i += 1
+
+    # dedupe mantendo ordem
     seen = set()
     uniq: List[Dict[str, str]] = []
     for b in out:
@@ -182,51 +279,6 @@ def _parse_bosses_from_rendered_text(html: str) -> List[Dict[str, str]]:
     return uniq
 
 
-# ---------------------------------------------------------------------------
-# Normalização para __NEXT_DATA__ (fallback)
-# ---------------------------------------------------------------------------
-def _normalize_chance_from_json(it: Dict[str, Any]) -> str:
-    val = (
-        it.get("spawnChance")
-        or it.get("spawn_chance")
-        or it.get("chancePercent")
-        or it.get("chance_percent")
-        or it.get("percentage")
-        or it.get("percent")
-        or it.get("probability")
-        or it.get("chanceText")
-        or it.get("chance_text")
-        or it.get("chance")
-    )
-
-    if isinstance(val, dict):
-        for k in ("text", "label", "value", "percent", "percentage"):
-            if k in val and val[k] is not None:
-                val = val[k]
-                break
-
-    if isinstance(val, (int, float)):
-        n = float(val)
-        if 0 <= n <= 1:
-            n *= 100.0
-        if abs(n - round(n)) < 1e-9:
-            return f"{int(round(n))}%"
-        return f"{n:.2f}%"
-
-    s = str(val or "").strip()
-    if not s:
-        return ""
-    s = s.replace(",", ".")
-    if re.fullmatch(r"\d{1,3}(?:\.\d{1,2})?%?", s):
-        return s if s.endswith("%") else f"{s}%"
-
-    if s.lower() == "sem chance":
-        return "No chance"
-    if s.lower() == "desconhecido":
-        return "Unknown"
-    return s
-
-
 def _normalize_expected_from_json(it: Dict[str, Any]) -> str:
     val = it.get("expected") or it.get("eta") or it.get("expectedIn") or it.get("expected_in")
     if isinstance(val, (int, float)):
@@ -236,7 +288,16 @@ def _normalize_expected_from_json(it: Dict[str, Any]) -> str:
     return _normalize_expected(s)
 
 
+# ---------------------------------------------------------------------------
+# Função pública usada pelo app
+# ---------------------------------------------------------------------------
 def fetch_exevopan_bosses(world: str, timeout: int = 20) -> List[Dict[str, str]]:
+    """Busca bosses do ExevoPan para um world.
+
+    Retorna lista de dicts:
+      {"boss": "...", "chance": "...", "status": "..."}
+    Onde status pode conter "Expected in: X day(s)" quando aplicável.
+    """
     world = (world or "").strip()
     if not world:
         return []
@@ -262,10 +323,12 @@ def fetch_exevopan_bosses(world: str, timeout: int = 20) -> List[Dict[str, str]]
     if not html:
         return []
 
+    # 1) Preferência: parse pelo texto renderizado (pega % decimais e previsão)
     out = _parse_bosses_from_rendered_text(html)
     if out:
         return out
 
+    # 2) Fallback: tenta __NEXT_DATA__ (best-effort)
     try:
         m = re.search(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
         if not m:
@@ -290,6 +353,7 @@ def fetch_exevopan_bosses(world: str, timeout: int = 20) -> List[Dict[str, str]]
             status = _normalize_expected_from_json(it)
             out2.append({"boss": str(name), "chance": str(chance), "status": str(status)})
 
+        # dedupe mantendo ordem
         seen = set()
         uniq: List[Dict[str, str]] = []
         for b in out2:
