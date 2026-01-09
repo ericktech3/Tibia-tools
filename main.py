@@ -627,57 +627,54 @@ class TibiaToolsApp(MDApp):
             scr.ids.imb_list.add_widget(item)
 
     def _imbu_show(self, ent: ImbuementEntry):
-        # Abre primeiro com placeholder e depois carrega os itens sob demanda.
-        page = (getattr(ent, "page", "") or "").strip()
-        title = ent.name
+        # Abre primeiro com placeholder e depois carrega os itens (sob demanda)
+        title = (ent.name or "").strip()
 
         dlg = MDDialog(
             title=title,
-            text="Carregando detalhes do TibiaWiki...",
-            buttons=[MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())],
+            text="Carregando detalhes...",
+            buttons=[
+                MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())
+            ],
         )
         dlg.open()
 
         def run():
             try:
-                # se não tiver página, tenta usar o próprio nome como title
-                ok, data = fetch_imbuement_details(page or title.replace(" ", "_"))
+                page = (ent.page or "").strip()
+                if not page:
+                    page = title.replace(" ", "_")
+
+                ok, data = fetch_imbuement_details(page)
                 if not ok:
-                    msg = f"Erro ao carregar detalhes:
-{data}"
+                    msg = f"Erro ao carregar detalhes:\\n{data}"
                     Clock.schedule_once(lambda *_: setattr(dlg, "text", msg), 0)
                     return
 
-                tiers = data  # type: ignore[assignment]
+                tiers = data  # dict com basic/intricate/powerful
+
                 def fmt(tkey: str, label: str) -> str:
-                    effect = str(tiers.get(tkey, {}).get("effect", "")).strip()
-                    items = tiers.get(tkey, {}).get("items", []) or []
-                    lines = []
+                    tier = tiers.get(tkey, {}) if isinstance(tiers, dict) else {}
+                    effect = str(tier.get("effect", "")).strip()
+                    items = tier.get("items", []) or []
+                    out_lines = []
                     if effect:
-                        lines.append(f"Efeito: {effect}")
+                        out_lines.append(f"Efeito: {effect}")
                     if items:
-                        lines.append("Itens:")
+                        out_lines.append("Itens:")
                         for it in items[:50]:
-                            lines.append(f"- {it}")
+                            out_lines.append(f"- {it}")
                     else:
-                        lines.append("Itens: (não encontrado)")
-                    return f"{label}:
-" + "
-".join(lines)
+                        out_lines.append("Itens: (não encontrado)")
+                    return f"{label}:\\n" + "\\n".join(out_lines)
 
                 text = (
                     fmt("basic", "Basic")
-                    + "
-
-"
+                    + "\\n\\n"
                     + fmt("intricate", "Intricate")
-                    + "
-
-"
+                    + "\\n\\n"
                     + fmt("powerful", "Powerful")
-                    + "
-
-(Fonte: TibiaWiki BR)"
+                    + "\\n\\n(Fonte: TibiaWiki BR)"
                 )
                 Clock.schedule_once(lambda *_: setattr(dlg, "text", text), 0)
             except Exception as e:
