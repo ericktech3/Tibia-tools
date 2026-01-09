@@ -20,6 +20,7 @@ from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager
+from kivy.factory import Factory
 
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
@@ -404,21 +405,26 @@ class TibiaToolsApp(MDApp):
 
         threading.Thread(target=run, daemon=True).start()
 
+
     def _bosses_done(self, bosses):
         scr = self.root.get_screen("bosses")
         scr.ids.boss_list.clear_widgets()
         if not bosses:
             scr.ids.boss_status.text = "Nada encontrado (ou ExevoPan indisponível)."
             return
+
         scr.ids.boss_status.text = f"Encontrado(s): {len(bosses)}"
-        for b in bosses[:200]:
+        for b in bosses[:300]:
             title = b.get("boss") or b.get("name") or "Boss"
             chance = b.get("chance") or ""
             status = b.get("status") or ""
-            extra = " | ".join([x for x in [chance, status] if x])
-            item = OneLineIconListItem(text=f"{title}{(' - ' + extra) if extra else ''}")
-            item.add_widget(IconLeftWidget(icon="skull"))
-            scr.ids.boss_list.add_widget(item)
+
+            # Normaliza: se status vier vazio mas existirem campos alternativos
+            if not status:
+                status = b.get("when") or b.get("expected") or ""
+
+            row = Factory.BossRow(boss=str(title), chance=str(chance), status=str(status))
+            scr.ids.boss_list.add_widget(row)
 
     # --------------------
     # Boosted
