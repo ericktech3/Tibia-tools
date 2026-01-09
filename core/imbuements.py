@@ -1,252 +1,219 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 import re
+from typing import Dict, List, Tuple, Optional
+from urllib.parse import urljoin, unquote
 
 import requests
 from bs4 import BeautifulSoup
 
 
+_TIBIAWIKI_BASE = "https://www.tibiawiki.com.br"
+_IMBUEMENTS_LIST_URL = f"{_TIBIAWIKI_BASE}/wiki/Imbuements"
+_FANDOM_FALLBACK_URL = "https://tibia.fandom.com/wiki/Imbuements"
+
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Android) TibiaTools/1.0",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+}
+
+
 @dataclass
 class ImbuementEntry:
+    # Nome “limpo” (sem artefatos tipo [])
     name: str
+    # Efeito/resumo por tier (na página lista geralmente é algo curto como 3%, 8%, 15% etc.)
     basic: str
     intricate: str
     powerful: str
+    # Caminho/título da página no TibiaWiki BR (ex.: /wiki/Electrify_(Dano_de_Energia))
+    page: str
 
 
-# URLs (primário = TibiaWiki BR; fallback = Fandom)
-_IMB_URL = "https://www.tibiawiki.com.br/wiki/Imbuements"
-_IMB_ALT_URL = "https://tibia.fandom.com/wiki/Imbuements"
+def _clean_name(s: str) -> str:
+    s = (s or "").strip()
+    # Remove artefatos comuns que aparecem no HTML (ex.: "Capacity []")
+    s = re.sub(r"\[[^\]]*\]", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
-_TIER_WORDS = ("basic", "intricate", "powerful")
-_EDIT_TAIL_RE = re.compile(r"\[\s*edit\s*\]$", re.I)
 
-
-def _clean_text(el) -> str:
-    if el is None:
+def _extract_page_href(cell) -> str:
+    a = cell.find("a", href=True)
+    if not a:
         return ""
-    # preserva quebras de linha dentro da célula (fica melhor no dialog)
-    txt = el.get_text("\n", strip=True)
-    txt = re.sub(r"\n{3,}", "\n\n", txt)
-    txt = re.sub(r"[ \t]+", " ", txt)
-    return txt.strip()
+    href = a.get("href", "") or ""
+    # No TibiaWiki BR costuma ser /wiki/...
+    if href.startswith("//"):
+        href = "https:" + href
+    if href.startswith("http"):
+        return href
+    if href.startswith("/"):
+        return href
+    # fallback
+    return "/" + href
 
 
-def _normalize_heading(text: str) -> str:
-    t = (text or "").strip()
-    t = _EDIT_TAIL_RE.sub("", t).strip()
-    # remove notas como (Imbuement) etc, mas mantém se fizer parte do nome
-    return t
+def fetch_imbuements_table() -> Tuple[bool, List[ImbuementEntry] | str]:
+    """Busca e parseia a lista de Imbuements.
 
-
-def _guess_indices_from_header(th_texts: List[str]) -> Tuple[int, Optional[int], Optional[int], Optional[int]]:
+    Retorna lista com 24 tipos (normalmente), contendo o nome e um resumo do efeito por tier.
+    A lista NÃO traz os itens necessários; isso é buscado sob demanda (clique no imbuement).
     """
-    Retorna: (idx_name, idx_basic, idx_intricate, idx_powerful)
-    """
-    lower = [t.lower() for t in th_texts]
-    # nome
-    idx_name = 0
-    for i, t in enumerate(lower):
-        if "imbu" in t or t in ("name", "nome"):
-            idx_name = i
-            break
+    try:
+        url = _IMBUEMENTS_LIST_URL
+        r = requests.get(url, headers=_HEADERS, timeout=20)
+        if r.status_code >= 400 or not r.text:
+            # fallback fandom (mantém app funcionando se o BR estiver fora)
+            r = requests.get(_FANDOM_FALLBACK_URL, headers=_HEADERS, timeout=20)
 
-    def find_col(keys: Tuple[str, ...]) -> Optional[int]:
-        for i, t in enumerate(lower):
-            if any(k in t for k in keys):
-                return i
-        return None
+        if r.status_code >= 400 or not r.text:
+            return False, f"Falha ao acessar a página ({r.status_code})."
 
-    idx_basic = find_col(("basic", "básico", "basico"))
-    idx_intr = find_col(("intricate", "intricado"))
-    idx_pow = find_col(("powerful", "poderoso", "poderosa"))
-    return idx_name, idx_basic, idx_intr, idx_pow
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # Procura uma tabela que tenha as colunas Basic/Intricate/Powerful
+        target = None
+        for t in soup.find_all("table"):
+            header_txt = t.get_text(" ", strip=True).lower()
+            if "basic" in header_txt and "intricate" in header_txt and "powerful" in header_txt:
+                target = t
+                break
+
+        if not target:
+            return False, "Tabela de imbuements não encontrada."
+
+        out: List[ImbuementEntry] = []
+        rows = target.find_all("tr")
+        for r in rows[1:]:
+            cols = r.find_all(["td", "th"])
+            if len(cols) < 4:
+                continue
+
+            # Nome + link (se existir)
+            a = cols[0].find("a")
+            name = a.get_text(" ", strip=True) if a else cols[0].get_text(" ", strip=True)
+            name = _clean_name(name)
+
+            basic = cols[1].get_text(" ", strip=True)
+            intricate = cols[2].get_text(" ", strip=True)
+            powerful = cols[3].get_text(" ", strip=True)
+
+            if not name:
+                continue
+            if name.strip().lower() in {"imbuement", "name", "imbuements"}:
+                continue
+
+            page = _extract_page_href(cols[0])
+
+            out.append(ImbuementEntry(name=name, basic=basic, intricate=intricate, powerful=powerful, page=page))
+
+        # Dedup por nome (algumas páginas podem repetir cabeçalhos/linhas)
+        uniq: List[ImbuementEntry] = []
+        seen = set()
+        for e in out:
+            key = e.name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(e)
+
+        if not uniq:
+            return False, "Não foi possível extrair linhas da tabela."
+        return True, uniq
+    except Exception as e:
+        return False, str(e)
 
 
-def _parse_big_table(table) -> List[ImbuementEntry]:
-    """
-    Tabela "grande": uma linha por imbuement e colunas Basic/Intricate/Powerful.
-    Essa é a melhor forma quando existe na página.
-    """
-    out: List[ImbuementEntry] = []
-    header_row = table.find("tr")
-    if not header_row:
+def _normalize_tier_label(s: str) -> Optional[str]:
+    s = (s or "").strip().lower().replace(":", "")
+    if s in {"basic", "básico", "basico"}:
+        return "Basic"
+    if s in {"intricate", "intrincado"}:
+        return "Intricate"
+    if s in {"powerful", "poderoso"}:
+        return "Powerful"
+    return None
+
+
+def _clean_li_text(s: str) -> str:
+    s = (s or "").strip()
+    # remove trechos de imagem/ícones que aparecem no texto
+    s = re.sub(r"\bImage:.*$", "", s).strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _extract_sources_items(soup: BeautifulSoup) -> Dict[str, List[str]]:
+    """Extrai os itens (Fontes Astrais) por tier a partir da página individual do imbuement."""
+    out: Dict[str, List[str]] = {"Basic": [], "Intricate": [], "Powerful": []}
+
+    # Encontra o ponto onde começa "Fontes Astrais"
+    start = soup.find(string=re.compile(r"Fontes\s+Astrais", re.I))
+    if not start:
         return out
 
-    ths = header_row.find_all(["th", "td"])
-    th_texts = [_clean_text(th) for th in ths]
-    if not th_texts:
-        return out
+    node = start.parent
 
-    header_join = " ".join(th_texts).lower()
-    if not all(w in header_join for w in _TIER_WORDS):
-        return out
+    current: Optional[str] = None
 
-    idx_name, idx_basic, idx_intr, idx_pow = _guess_indices_from_header(th_texts)
-    # se não encontrou colunas de tier, aborta
-    if idx_basic is None or idx_intr is None or idx_pow is None:
-        return out
+    # Caminha a partir desse ponto, procurando títulos Basic/Intricate/Powerful e <li> subsequentes
+    for el in node.next_elements:
+        # texto de controle para parar
+        if hasattr(el, "get_text"):
+            txt = el.get_text(" ", strip=True)
+            if re.search(r"\bTabela de Custos\b|\bNotas\b|\bVeja Também\b|\bCategorias\b|Disponível em", txt, re.I):
+                break
 
-    for tr in table.find_all("tr")[1:]:
-        tds = tr.find_all(["td", "th"])
-        if not tds or len(tds) <= max(idx_name, idx_basic, idx_intr, idx_pow):
-            continue
+            tier = _normalize_tier_label(txt)
+            if tier:
+                current = tier
+                continue
 
-        name = _clean_text(tds[idx_name])
-        if not name:
-            continue
-        name_l = name.strip().lower()
-        if name_l in {"imbuement", "imbuements", "name", "nome"}:
-            continue
+        # captura itens
+        if getattr(el, "name", None) == "li" and current:
+            li_txt = _clean_li_text(el.get_text(" ", strip=True))
+            if not li_txt:
+                continue
+            # normaliza "25 Rorc Feather" -> "25x Rorc Feather"
+            m = re.match(r"^(\d+)\s+(.+)$", li_txt)
+            if m:
+                qty = m.group(1)
+                item = m.group(2).strip()
+                out[current].append(f"{qty}x {item}")
+            else:
+                out[current].append(li_txt)
 
-        basic = _clean_text(tds[idx_basic])
-        intr = _clean_text(tds[idx_intr])
-        powr = _clean_text(tds[idx_pow])
-
-        # evita entradas "vazias"
-        if not (basic or intr or powr):
-            continue
-
-        out.append(ImbuementEntry(name.strip(), basic or "N/A", intr or "N/A", powr or "N/A"))
     return out
 
 
-def _find_previous_heading(table) -> str:
-    # procura um heading logo antes da tabela (h2/h3/h4)
-    node = table
-    for _ in range(60):
-        node = node.previous_element
-        if node is None:
-            break
-        if getattr(node, "name", None) in ("h2", "h3", "h4"):
-            text = _normalize_heading(_clean_text(node))
-            if text:
-                return text
-    return ""
+def fetch_imbuement_details(page: str) -> Tuple[bool, Dict[str, List[str]] | str]:
+    """Busca detalhes do imbuement (itens necessários por tier) na página do TibiaWiki BR.
 
-
-def _parse_tier_table(table) -> Optional[ImbuementEntry]:
+    Retorna um dict:
+      {"Basic": ["25x Item A", ...], "Intricate": [...], "Powerful": [...]}
     """
-    Tabela por imbuement: geralmente 3 linhas (Basic/Intricate/Powerful).
-    """
-    rows = table.find_all("tr")
-    if len(rows) < 2:
-        return None
-
-    tiers: Dict[str, str] = {"basic": "", "intricate": "", "powerful": ""}
-
-    # detecta se a primeira coluna tem "Basic/Intricate/Powerful"
-    matches = 0
-    for tr in rows:
-        cells = tr.find_all(["td", "th"])
-        if len(cells) < 2:
-            continue
-        left = _clean_text(cells[0]).lower()
-        if "basic" in left or "básico" in left or "basico" in left:
-            matches += 1
-        elif "intricate" in left or "intricado" in left:
-            matches += 1
-        elif "powerful" in left or "poderoso" in left or "poderosa" in left:
-            matches += 1
-
-    if matches < 2:
-        return None
-
-    name = _find_previous_heading(table)
-    if not name:
-        return None
-
-    for tr in rows:
-        cells = tr.find_all(["td", "th"])
-        if len(cells) < 2:
-            continue
-        tier_raw = _clean_text(cells[0]).lower()
-        value = _clean_text(cells[1])
-
-        if not value:
-            continue
-
-        if "basic" in tier_raw or "básico" in tier_raw or "basico" in tier_raw:
-            tiers["basic"] = value
-        elif "intricate" in tier_raw or "intricado" in tier_raw:
-            tiers["intricate"] = value
-        elif "powerful" in tier_raw or "poderoso" in tier_raw or "poderosa" in tier_raw:
-            tiers["powerful"] = value
-
-    if not any(tiers.values()):
-        return None
-
-    return ImbuementEntry(
-        name=name,
-        basic=tiers["basic"] or "N/A",
-        intricate=tiers["intricate"] or "N/A",
-        powerful=tiers["powerful"] or "N/A",
-    )
-
-
-def fetch_imbuements_table():
-    """
-    Busca imbuements (lista completa) e retorna:
-      (True, List[ImbuementEntry]) ou (False, "mensagem de erro")
-
-    Estruturas suportadas:
-    - tabela grande com colunas Basic/Intricate/Powerful
-    - várias tabelas por imbuement (3 linhas Basic/Intricate/Powerful)
-    """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Android) TibiaTools/1.0",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    }
-
     try:
-        # 1) tenta TibiaWiki BR
-        resp = requests.get(_IMB_URL, headers=headers, timeout=20)
-        html = resp.text or ""
-        if resp.status_code >= 400 or len(html) < 2000:
-            # 2) fallback Fandom
-            resp2 = requests.get(_IMB_ALT_URL, headers=headers, timeout=20)
-            html = resp2.text or ""
+        if not page:
+            return False, "Página do imbuement não encontrada."
 
-        if not html or len(html) < 1000:
-            return False, "Resposta vazia do site."
+        # Monta URL
+        if page.startswith("http"):
+            url = page
+        elif page.startswith("/"):
+            url = urljoin(_TIBIAWIKI_BASE, page)
+        else:
+            url = urljoin(_TIBIAWIKI_BASE, "/wiki/" + page)
 
-        soup = BeautifulSoup(html, "html.parser")
-        tables = soup.find_all("table")
+        r = requests.get(url, headers=_HEADERS, timeout=20)
+        if r.status_code >= 400 or not r.text:
+            return False, f"Falha ao acessar o TibiaWiki ({r.status_code})."
 
-        # A) tenta achar uma tabela grande (mais comum e melhor)
-        merged: List[ImbuementEntry] = []
-        for t in tables:
-            merged.extend(_parse_big_table(t))
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = _extract_sources_items(soup)
 
-        # se achou bastante, retorna
-        if len(merged) >= 10:
-            # dedupe por nome
-            by_name: Dict[str, ImbuementEntry] = {}
-            for e in merged:
-                by_name[e.name.lower()] = e
-            out = list(by_name.values())
-            out.sort(key=lambda x: x.name.lower())
-            return True, out
-
-        # B) fallback: várias tabelas por imbuement
-        items: List[ImbuementEntry] = []
-        for t in tables:
-            e = _parse_tier_table(t)
-            if e:
-                items.append(e)
-
-        if items:
-            by_name: Dict[str, ImbuementEntry] = {}
-            for e in items:
-                by_name[e.name.lower()] = e
-            out = list(by_name.values())
-            out.sort(key=lambda x: x.name.lower())
-            return True, out
-
-        return False, "Não foi possível extrair a lista completa de imbuements."
+        # Se veio tudo vazio, ainda assim devolve (UI mostra "não encontrado")
+        return True, items
     except Exception as e:
-        # aqui caía o erro 're' não definido se alguém usava re sem importar;
-        # agora re está importado, mas mantemos o try/except para mostrar a mensagem no app.
         return False, str(e)
