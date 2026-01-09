@@ -627,43 +627,64 @@ class TibiaToolsApp(MDApp):
             scr.ids.imb_list.add_widget(item)
 
     def _imbu_show(self, ent: ImbuementEntry):
-        scr = self.root.get_screen("imbuements")
-        scr.ids.imb_status.text = "Carregando itens..."
-
-        def run():
-            ok, details = fetch_imbuement_details(ent.page)
-            Clock.schedule_once(lambda *_: self._imbu_show_done(ent, ok, details), 0)
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def _imbu_show_done(self, ent: ImbuementEntry, ok: bool, details):
-        scr = self.root.get_screen("imbuements")
-        scr.ids.imb_status.text = ""
-
-        parts = []
-        parts.append(f"Basic: {ent.basic}")
-        parts.append(f"Intricate: {ent.intricate}")
-        parts.append(f"Powerful: {ent.powerful}")
-
-        if ok and isinstance(details, dict):
-            def fmt(tier: str) -> str:
-                items = details.get(tier, []) or []
-                if not items:
-                    return f"{tier} itens: (não encontrado)"
-                return tier + " itens:\n" + "\n".join([f"• {x}" for x in items])
-
-            items_txt = "\n\n".join([fmt("Basic"), fmt("Intricate"), fmt("Powerful")])
-        else:
-            items_txt = "Itens necessários: (não encontrado)"
-
-        text = ("\n".join(parts) + "\n\n" + items_txt + "\n\n(Fonte: TibiaWiki BR)")
+        # Abre primeiro com placeholder e depois carrega os itens sob demanda.
+        page = (getattr(ent, "page", "") or "").strip()
+        title = ent.name
 
         dlg = MDDialog(
-            title=ent.name,
-            text=text,
+            title=title,
+            text="Carregando detalhes do TibiaWiki...",
             buttons=[MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())],
         )
         dlg.open()
+
+        def run():
+            try:
+                # se não tiver página, tenta usar o próprio nome como title
+                ok, data = fetch_imbuement_details(page or title.replace(" ", "_"))
+                if not ok:
+                    msg = f"Erro ao carregar detalhes:
+{data}"
+                    Clock.schedule_once(lambda *_: setattr(dlg, "text", msg), 0)
+                    return
+
+                tiers = data  # type: ignore[assignment]
+                def fmt(tkey: str, label: str) -> str:
+                    effect = str(tiers.get(tkey, {}).get("effect", "")).strip()
+                    items = tiers.get(tkey, {}).get("items", []) or []
+                    lines = []
+                    if effect:
+                        lines.append(f"Efeito: {effect}")
+                    if items:
+                        lines.append("Itens:")
+                        for it in items[:50]:
+                            lines.append(f"- {it}")
+                    else:
+                        lines.append("Itens: (não encontrado)")
+                    return f"{label}:
+" + "
+".join(lines)
+
+                text = (
+                    fmt("basic", "Basic")
+                    + "
+
+"
+                    + fmt("intricate", "Intricate")
+                    + "
+
+"
+                    + fmt("powerful", "Powerful")
+                    + "
+
+(Fonte: TibiaWiki BR)"
+                )
+                Clock.schedule_once(lambda *_: setattr(dlg, "text", text), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda *_: setattr(dlg, "text", f"Erro: {e}"), 0)
+
+        threading.Thread(target=run, daemon=True).start()
+
 
 if __name__ == "__main__":
     TibiaToolsApp().run()

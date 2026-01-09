@@ -1,219 +1,269 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
-from typing import Dict, List, Tuple, Optional
-from urllib.parse import urljoin, unquote
+from typing import Dict, List, Tuple
 
+import re
 import requests
 from bs4 import BeautifulSoup
 
 
-_TIBIAWIKI_BASE = "https://www.tibiawiki.com.br"
-_IMBUEMENTS_LIST_URL = f"{_TIBIAWIKI_BASE}/wiki/Imbuements"
-_FANDOM_FALLBACK_URL = "https://tibia.fandom.com/wiki/Imbuements"
-
-_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Android) TibiaTools/1.0",
-    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-}
-
-
 @dataclass
 class ImbuementEntry:
-    # Nome “limpo” (sem artefatos tipo [])
+    # Nome exibido (ex: "Scorch", "Vampirism", "Capacity")
     name: str
-    # Efeito/resumo por tier (na página lista geralmente é algo curto como 3%, 8%, 15% etc.)
+    # Resumo/efeito por tier (ex: "3%"). Pode ficar vazio se o site mudar.
     basic: str
     intricate: str
     powerful: str
-    # Caminho/título da página no TibiaWiki BR (ex.: /wiki/Electrify_(Dano_de_Energia))
-    page: str
+    # Página no TibiaWiki BR (title após /wiki/)
+    page: str = ""
+
+
+_TIBIAWIKI_BR_BASE = "https://www.tibiawiki.com.br"
+_IMBUEMENTS_CATEGORY = _TIBIAWIKI_BR_BASE + "/wiki/Categoria:Imbuements"
+_IMBUEMENTS_INDEX = _TIBIAWIKI_BR_BASE + "/wiki/Imbuements"
 
 
 def _clean_name(s: str) -> str:
     s = (s or "").strip()
-    # Remove artefatos comuns que aparecem no HTML (ex.: "Capacity []")
-    s = re.sub(r"\[[^\]]*\]", "", s)
+    s = re.sub(r"\s*\[[^\]]*\]\s*$", "", s).strip()  # remove [1]
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
 
-def _extract_page_href(cell) -> str:
-    a = cell.find("a", href=True)
-    if not a:
-        return ""
-    href = a.get("href", "") or ""
-    # No TibiaWiki BR costuma ser /wiki/...
-    if href.startswith("//"):
-        href = "https:" + href
-    if href.startswith("http"):
-        return href
-    if href.startswith("/"):
-        return href
-    # fallback
-    return "/" + href
+def _display_name_from_title(title: str) -> str:
+    title = _clean_name(title)
+    # remove tradução em parênteses no final: "Vampirism (Roubo de Vida)" -> "Vampirism"
+    if "(" in title and title.endswith(")"):
+        base = title.split("(", 1)[0].strip()
+        if base:
+            return base
+    return title
 
 
-def fetch_imbuements_table() -> Tuple[bool, List[ImbuementEntry] | str]:
-    """Busca e parseia a lista de Imbuements.
+def _page_from_href(href: str) -> str:
+    href = (href or "").strip()
+    m = re.search(r"/wiki/([^#?]+)", href)
+    return m.group(1).strip() if m else ""
 
-    Retorna lista com 24 tipos (normalmente), contendo o nome e um resumo do efeito por tier.
-    A lista NÃO traz os itens necessários; isso é buscado sob demanda (clique no imbuement).
-    """
+
+def _extract_effect(cell_text: str) -> str:
+    t = (cell_text or "").replace(",", ".")
+    m = re.search(r"(\d{1,3}(?:\.\d{1,2})?%)", t)
+    return m.group(1) if m else (cell_text or "").strip()
+
+
+def _fetch_category_list(timeout: int) -> Tuple[bool, List[ImbuementEntry] | str]:
+    """Lista os 24 imbuements pela categoria do TibiaWiki BR."""
     try:
-        url = _IMBUEMENTS_LIST_URL
-        r = requests.get(url, headers=_HEADERS, timeout=20)
-        if r.status_code >= 400 or not r.text:
-            # fallback fandom (mantém app funcionando se o BR estiver fora)
-            r = requests.get(_FANDOM_FALLBACK_URL, headers=_HEADERS, timeout=20)
+        resp = requests.get(_IMBUEMENTS_CATEGORY, headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        if r.status_code >= 400 or not r.text:
-            return False, f"Falha ao acessar a página ({r.status_code})."
+        entries: List[ImbuementEntry] = []
+        # MediaWiki: links ficam na área de categoria
+        cat = soup.find(class_=re.compile(r"mw-category"))
+        scope = cat if cat else soup
 
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # Procura uma tabela que tenha as colunas Basic/Intricate/Powerful
-        target = None
-        for t in soup.find_all("table"):
-            header_txt = t.get_text(" ", strip=True).lower()
-            if "basic" in header_txt and "intricate" in header_txt and "powerful" in header_txt:
-                target = t
-                break
-
-        if not target:
-            return False, "Tabela de imbuements não encontrada."
-
-        out: List[ImbuementEntry] = []
-        rows = target.find_all("tr")
-        for r in rows[1:]:
-            cols = r.find_all(["td", "th"])
-            if len(cols) < 4:
-                continue
-
-            # Nome + link (se existir)
-            a = cols[0].find("a")
-            name = a.get_text(" ", strip=True) if a else cols[0].get_text(" ", strip=True)
-            name = _clean_name(name)
-
-            basic = cols[1].get_text(" ", strip=True)
-            intricate = cols[2].get_text(" ", strip=True)
-            powerful = cols[3].get_text(" ", strip=True)
-
-            if not name:
-                continue
-            if name.strip().lower() in {"imbuement", "name", "imbuements"}:
-                continue
-
-            page = _extract_page_href(cols[0])
-
-            out.append(ImbuementEntry(name=name, basic=basic, intricate=intricate, powerful=powerful, page=page))
-
-        # Dedup por nome (algumas páginas podem repetir cabeçalhos/linhas)
-        uniq: List[ImbuementEntry] = []
         seen = set()
-        for e in out:
-            key = e.name.lower()
+        for a in scope.find_all("a", href=True):
+            href = a["href"]
+            page = _page_from_href(href)
+            if not page:
+                continue
+
+            # ignora links internos da wiki que não sejam páginas de imbuement (heurística)
+            # A categoria costuma listar apenas as 24 páginas.
+            title = a.get_text(" ", strip=True)
+            title = _clean_name(title)
+            if not title or title.lower().startswith(("ajuda", "categoria", "especial", "ficheiro", "arquivo", "file")):
+                continue
+
+            disp = _display_name_from_title(title)
+            key = page.lower()
             if key in seen:
                 continue
             seen.add(key)
-            uniq.append(e)
 
-        if not uniq:
-            return False, "Não foi possível extrair linhas da tabela."
-        return True, uniq
+            entries.append(ImbuementEntry(name=disp, basic="", intricate="", powerful="", page=page))
+
+        # a categoria “Imbuements” do TibiaWiki BR tem exatamente 24 páginas
+        if len(entries) >= 20:
+            entries.sort(key=lambda e: e.name.lower())
+            return True, entries
+
+        return False, f"Categoria retornou poucos itens ({len(entries)})."
     except Exception as e:
         return False, str(e)
 
 
-def _normalize_tier_label(s: str) -> Optional[str]:
-    s = (s or "").strip().lower().replace(":", "")
-    if s in {"basic", "básico", "basico"}:
-        return "Basic"
-    if s in {"intricate", "intrincado"}:
-        return "Intricate"
-    if s in {"powerful", "poderoso"}:
-        return "Powerful"
-    return None
-
-
-def _clean_li_text(s: str) -> str:
-    s = (s or "").strip()
-    # remove trechos de imagem/ícones que aparecem no texto
-    s = re.sub(r"\bImage:.*$", "", s).strip()
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-
-def _extract_sources_items(soup: BeautifulSoup) -> Dict[str, List[str]]:
-    """Extrai os itens (Fontes Astrais) por tier a partir da página individual do imbuement."""
-    out: Dict[str, List[str]] = {"Basic": [], "Intricate": [], "Powerful": []}
-
-    # Encontra o ponto onde começa "Fontes Astrais"
-    start = soup.find(string=re.compile(r"Fontes\s+Astrais", re.I))
-    if not start:
-        return out
-
-    node = start.parent
-
-    current: Optional[str] = None
-
-    # Caminha a partir desse ponto, procurando títulos Basic/Intricate/Powerful e <li> subsequentes
-    for el in node.next_elements:
-        # texto de controle para parar
-        if hasattr(el, "get_text"):
-            txt = el.get_text(" ", strip=True)
-            if re.search(r"\bTabela de Custos\b|\bNotas\b|\bVeja Também\b|\bCategorias\b|Disponível em", txt, re.I):
-                break
-
-            tier = _normalize_tier_label(txt)
-            if tier:
-                current = tier
-                continue
-
-        # captura itens
-        if getattr(el, "name", None) == "li" and current:
-            li_txt = _clean_li_text(el.get_text(" ", strip=True))
-            if not li_txt:
-                continue
-            # normaliza "25 Rorc Feather" -> "25x Rorc Feather"
-            m = re.match(r"^(\d+)\s+(.+)$", li_txt)
-            if m:
-                qty = m.group(1)
-                item = m.group(2).strip()
-                out[current].append(f"{qty}x {item}")
-            else:
-                out[current].append(li_txt)
-
-    return out
-
-
-def fetch_imbuement_details(page: str) -> Tuple[bool, Dict[str, List[str]] | str]:
-    """Busca detalhes do imbuement (itens necessários por tier) na página do TibiaWiki BR.
-
-    Retorna um dict:
-      {"Basic": ["25x Item A", ...], "Intricate": [...], "Powerful": [...]}
-    """
+def _fetch_index_table(timeout: int) -> Tuple[bool, List[ImbuementEntry] | str]:
+    """Fallback antigo: tenta achar tabela Basic/Intricate/Powerful na página /wiki/Imbuements (se existir)."""
     try:
-        if not page:
-            return False, "Página do imbuement não encontrada."
+        resp = requests.get(_IMBUEMENTS_INDEX, headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Monta URL
-        if page.startswith("http"):
-            url = page
-        elif page.startswith("/"):
-            url = urljoin(_TIBIAWIKI_BASE, page)
-        else:
-            url = urljoin(_TIBIAWIKI_BASE, "/wiki/" + page)
+        rows: List[ImbuementEntry] = []
+        for table in soup.find_all("table"):
+            table_text = table.get_text(" ", strip=True).lower()
+            if "basic" not in table_text or "intricate" not in table_text or "powerful" not in table_text:
+                continue
 
-        r = requests.get(url, headers=_HEADERS, timeout=20)
-        if r.status_code >= 400 or not r.text:
-            return False, f"Falha ao acessar o TibiaWiki ({r.status_code})."
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                if len(cells) < 4:
+                    continue
 
-        soup = BeautifulSoup(r.text, "html.parser")
-        items = _extract_sources_items(soup)
+                name_cell = cells[0]
+                name_text = _clean_name(name_cell.get_text(" ", strip=True))
+                if not name_text:
+                    continue
+                # ignora cabeçalhos
+                if name_text.lower() in {"name", "imbuement", "imbuements"}:
+                    continue
 
-        # Se veio tudo vazio, ainda assim devolve (UI mostra "não encontrado")
-        return True, items
+                a = name_cell.find("a", href=True)
+                page = _page_from_href(a["href"]) if a else ""
+
+                basic = _extract_effect(cells[1].get_text(" ", strip=True))
+                intricate = _extract_effect(cells[2].get_text(" ", strip=True))
+                powerful = _extract_effect(cells[3].get_text(" ", strip=True))
+
+                disp = _display_name_from_title(name_text)
+                rows.append(ImbuementEntry(disp, basic, intricate, powerful, page=page))
+
+        # dedupe
+        uniq: Dict[str, ImbuementEntry] = {}
+        for e in rows:
+            k = e.page.lower() if e.page else e.name.lower()
+            if k not in uniq:
+                uniq[k] = e
+
+        out = sorted(uniq.values(), key=lambda e: e.name.lower())
+        if len(out) >= 20:
+            return True, out
+        return False, f"Index retornou poucos itens ({len(out)})."
+    except Exception as e:
+        return False, str(e)
+
+
+def fetch_imbuements_table(timeout: int = 20):
+    """
+    Retorna (ok, data):
+      ok=True  -> data é List[ImbuementEntry] (~24)
+      ok=False -> data é string de erro
+    """
+    ok, data = _fetch_category_list(timeout)
+    if ok:
+        return ok, data
+    # fallback
+    ok2, data2 = _fetch_index_table(timeout)
+    if ok2:
+        return ok2, data2
+    return False, f"{data} | {data2}"
+
+
+# --------------------------------------------------------------------
+# Detalhes (itens necessários) - carregado sob demanda ao clicar
+# --------------------------------------------------------------------
+def fetch_imbuement_details(page: str, timeout: int = 20):
+    """
+    Retorna (ok, data):
+      ok=True -> data = {
+          "basic": {"effect": "...", "items": ["25x ...", ...]},
+          "intricate": {...},
+          "powerful": {...}
+      }
+      ok=False -> data = string erro
+    """
+    page = (page or "").strip()
+    if not page:
+        return False, "Página inválida."
+
+    url = f"{_TIBIAWIKI_BR_BASE}/wiki/{page}"
+    try:
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        tiers: Dict[str, Dict[str, object]] = {
+            "basic": {"effect": "", "items": []},
+            "intricate": {"effect": "", "items": []},
+            "powerful": {"effect": "", "items": []},
+        }
+
+        def add_items(tier_key: str, txt: str):
+            txt = (txt or "").strip()
+            if not txt:
+                return
+            for ln in re.split(r"[\n\r]+", txt):
+                ln = _clean_name(ln)
+                if not ln:
+                    continue
+                if ln.lower() in {"basic", "intricate", "powerful", "itens", "items", "fontes astrais"}:
+                    continue
+                # normaliza "25 Vampire Teeth" -> "25x Vampire Teeth"
+                m = re.match(r"^(\d+)\s*x?\s*(.+)$", ln)
+                if m:
+                    qty = m.group(1)
+                    item = _clean_name(m.group(2))
+                    if item:
+                        tiers[tier_key]["items"].append(f"{qty}x {item}")
+                else:
+                    tiers[tier_key]["items"].append(ln)
+
+        # 1) Tenta encontrar listas "Fontes Astrais" (é o padrão das páginas do TibiaWiki BR)
+        raw = soup.get_text("\n", strip=True)
+        raw = re.sub(r"[ \t]+", " ", raw)
+
+        for key, label in [("basic", "Basic"), ("intricate", "Intricate"), ("powerful", "Powerful")]:
+            # efeito (procura perto do label)
+            if not tiers[key]["effect"]:
+                m_eff = re.search(label + r".{0,120}?(\d{1,3}(?:[.,]\d{1,2})?%)", raw, flags=re.I | re.S)
+                if m_eff:
+                    tiers[key]["effect"] = m_eff.group(1).replace(",", ".")
+
+            # itens: pega trecho após "Basic:" etc e coleta linhas com números
+            m_blk = re.search(label + r":\s*(?:\n| )(.{0,600})", raw, flags=re.I | re.S)
+            if m_blk:
+                chunk = m_blk.group(1)
+                # pega itens com quantidade: "25 Vampire Teeth"
+                lines = re.findall(r"\b\d+\s*x?\s*[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' -]{2,}\b", chunk)
+                add_items(key, "\n".join(lines))
+
+        # 2) Se ainda não achou itens, tenta por tabelas com linhas Basic/Intricate/Powerful
+        if all(not tiers[k]["items"] for k in tiers):
+            for table in soup.find_all("table"):
+                rows = table.find_all("tr")
+                present = set()
+                for tr in rows:
+                    cells = tr.find_all(["th", "td"])
+                    if not cells:
+                        continue
+                    first = _clean_name(cells[0].get_text(" ", strip=True)).lower()
+                    if first in tiers:
+                        present.add(first)
+                if len(present) >= 2:
+                    for tr in rows:
+                        cells = tr.find_all(["th", "td"])
+                        if len(cells) < 2:
+                            continue
+                        tier = _clean_name(cells[0].get_text(" ", strip=True)).lower()
+                        if tier not in tiers:
+                            continue
+
+                        row_text = tr.get_text(" ", strip=True).replace(",", ".")
+                        if not tiers[tier]["effect"]:
+                            m = re.search(r"(\d{1,3}(?:\.\d{1,2})?%)", row_text)
+                            if m:
+                                tiers[tier]["effect"] = m.group(1)
+
+                        rest = "\n".join(c.get_text("\n", strip=True) for c in cells[1:])
+                        rest = re.sub(r"\d{1,3}(?:[.,]\d{1,2})?%", "", rest)
+                        add_items(tier, rest)
+
+        return True, tiers
     except Exception as e:
         return False, str(e)
