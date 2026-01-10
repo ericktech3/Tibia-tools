@@ -1,0 +1,1565 @@
+{
+  "Vampirism": {
+    "name": "Life Leech",
+    "gold_token": true,
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Converte 5% do dano para hit points com chance de 50%.",
+        "image": "https://www.tibiawiki.com.br/images/5/52/Imbuement_Life_Leech1.png",
+        "itens": [
+          {
+            "name": "Vampire Teeth",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Vampire_Teeth",
+            "image": "https://www.tibiawiki.com.br/images/f/f1/Vampire_Teeth.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Converte 10% do dano para hit points com chance de 50%.",
+        "image": "https://www.tibiawiki.com.br/images/6/6e/Imbuement_Life_Leech2.png",
+        "itens": [
+          {
+            "name": "Vampire Teeth",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Vampire_Teeth",
+            "image": "https://www.tibiawiki.com.br/images/f/f1/Vampire_Teeth.gif"
+          },
+          {
+            "name": "Bloody Pincers",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Bloody_Pincers",
+            "image": "https://www.tibiawiki.com.br/images/1/1d/Bloody_Pincers.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Converte 25% do dano para hit points com chance de 50%.",
+        "image": "https://www.tibiawiki.com.br/images/b/b0/Imbuement_Life_Leech3.png",
+        "itens": [
+          {
+            "name": "Vampire Teeth",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Vampire_Teeth",
+            "image": "https://www.tibiawiki.com.br/images/f/f1/Vampire_Teeth.gif"
+          },
+          {
+            "name": "Bloody Pincers",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Bloody_Pincers",
+            "image": "https://www.tibiawiki.com.br/images/1/1d/Bloody_Pincers.gif"
+          },
+          {
+            "name": "Piece of Dead Brain",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Piece_of_Dead_Brain",
+            "image": "https://www.tibiawiki.com.br/images/8/85/Piece_of_Dead_Brain.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Void": {
+    "name": "Mana Leech",
+    "gold_token": true,
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Converte 3% do dano para mana com chance de 30%.",
+        "image": "https://www.tibiawiki.com.br/images/d/d6/Imbuement_Mana_Leech1.png",
+        "itens": [
+          {
+            "name": "Rope Belt",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Rope_Belt",
+            "image": "https://www.tibiawiki.com.br/images/6/69/Rope_Belt.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Converte 5% do dano para mana com chance de 30%.",
+        "image": "https://www.tibiawiki.com.br/images/6/6c/Imbuement_Mana_Leech2.png",
+        "itens": [
+          {
+            "name": "Rope Belt",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Rope_Belt",
+            "image": "https://www.tibiawiki.com.br/images/6/69/Rope_Belt.gif"
+          },
+          {
+            "name": "Silencer Claws",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Silencer_Claws",
+            "image": "https://www.tibiawiki.com.br/images/d/d6/Silencer_Claws.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Converte 8% do dano para mana com chance de 30%.",
+        "image": "https://www.tibiawiki.com.br/images/2/28/Imbuement_Mana_Leech3.png",
+        "itens": [
+          {
+            "name": "Rope Belt",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Rope_Belt",
+            "image": "https://www.tibiawiki.com.br/images/6/69/Rope_Belt.gif"
+          },
+          {
+            "name": "Silencer Claws",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Silencer_Claws",
+            "image": "https://www.tibiawiki.com.br/images/d/d6/Silencer_Claws.gif"
+          },
+          {
+            "name": "Some Grimeleech Wings",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Some_Grimeleech_Wings",
+            "image": "https://www.tibiawiki.com.br/images/8/8c/Some_Grimeleech_Wings.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Strike": {
+    "name": "Hit Crítco",
+    "gold_token": true,
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Dano extra de crítico: 15%. Chance de acerto crítico: 10%.",
+        "image": "https://www.tibiawiki.com.br/images/1/1f/Imbuement_Critical-Strike1.png",
+        "itens": [
+          {
+            "name": "Protective Charm",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Protective_Charm",
+            "image": "https://www.tibiawiki.com.br/images/f/fb/Protective_Charm.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Dano extra de crítico: 25%.Chance de acerto crítico: 10%.",
+        "image": "https://www.tibiawiki.com.br/images/6/6c/Imbuement_Critical-Strike2.png",
+        "itens": [
+          {
+            "name": "Protective Charm",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Protective_Charm",
+            "image": "https://www.tibiawiki.com.br/images/f/fb/Protective_Charm.gif"
+          },
+          {
+            "name": "Sabretooth",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Sabretooth_(Item)",
+            "image": "https://www.tibiawiki.com.br/images/f/f7/Sabretooth_%28Item%29.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Dano extra de crítico: 50%. Chance de acerto crítico: 10%.",
+        "image": "https://www.tibiawiki.com.br/images/9/92/Imbuement_Critical-Strike3.png",
+        "itens": [
+          {
+            "name": "Protective Charm",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Protective_Charm",
+            "image": "https://www.tibiawiki.com.br/images/f/fb/Protective_Charm.gif"
+          },
+          {
+            "name": "Sabretooth",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Sabretooth_(Item)",
+            "image": "https://www.tibiawiki.com.br/images/f/f7/Sabretooth_%28Item%29.gif"
+          },
+          {
+            "name": "Vexclaw Talon",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Vexclaw_Talon",
+            "image": "https://www.tibiawiki.com.br/images/f/f7/Vexclaw_Talon.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Featherweight": {
+    "name": "Aumento de Capacidade",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua capacidade em 3%.",
+        "image": "https://www.tibiawiki.com.br/images/c/c6/Imbuement_Featherweight1.png",
+        "itens": [
+          {
+            "name": "Fairy Wings",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Fairy_Wings",
+            "image": "https://www.tibiawiki.com.br/images/1/1d/Fairy_Wings.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua capacidade em 8%.",
+        "image": "https://www.tibiawiki.com.br/images/1/17/Imbuement_Featherweight2.png",
+        "itens": [
+          {
+            "name": "Fairy Wings",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Fairy_Wings",
+            "image": "https://www.tibiawiki.com.br/images/1/1d/Fairy_Wings.gif"
+          },
+          {
+            "name": "Little Bowl of Myrrh",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Little_Bowl_of_Myrrh",
+            "image": "https://www.tibiawiki.com.br/images/3/38/Little_Bowl_of_Myrrh.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua capacidade em 15%.",
+        "image": "https://www.tibiawiki.com.br/images/2/2c/Imbuement_Featherweight3.png",
+        "itens": [
+          {
+            "name": "Fairy Wings",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Fairy_Wings",
+            "image": "https://www.tibiawiki.com.br/images/1/1d/Fairy_Wings.gif"
+          },
+          {
+            "name": "Little Bowl of Myrrh",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Little_Bowl_of_Myrrh",
+            "image": "https://www.tibiawiki.com.br/images/3/38/Little_Bowl_of_Myrrh.gif"
+          },
+          {
+            "name": "Goosebump Leather",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Goosebump_Leather",
+            "image": "https://www.tibiawiki.com.br/images/0/06/Goosebump_Leather.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Swiftness": {
+    "name": "Aumento de Speed",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua velocidade em 10.",
+        "image": "https://www.tibiawiki.com.br/images/3/3c/Imbuement_Skillboost_Speed1.png",
+        "itens": [
+          {
+            "name": "Damselfly Wing",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Damselfly_Wing",
+            "image": "https://www.tibiawiki.com.br/images/8/84/Damselfly_Wing.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua velocidade em 15.",
+        "image": "https://www.tibiawiki.com.br/images/4/4d/Imbuement_Skillboost_Speed2.png",
+        "itens": [
+          {
+            "name": "Damselfly Wing",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Damselfly_Wing",
+            "image": "https://www.tibiawiki.com.br/images/8/84/Damselfly_Wing.gif"
+          },
+          {
+            "name": "Compass",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Compass",
+            "image": "https://www.tibiawiki.com.br/images/1/1c/Compass.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua velocidade em 30.",
+        "image": "https://www.tibiawiki.com.br/images/3/3a/Imbuement_Skillboost_Speed3.png",
+        "itens": [
+          {
+            "name": "Damselfly Wing",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Damselfly_Wing",
+            "image": "https://www.tibiawiki.com.br/images/8/84/Damselfly_Wing.gif"
+          },
+          {
+            "name": "Compass",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Compass",
+            "image": "https://www.tibiawiki.com.br/images/1/1c/Compass.gif"
+          },
+          {
+            "name": "Waspoid Wing",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Waspoid_Wing",
+            "image": "https://www.tibiawiki.com.br/images/6/69/Waspoid_Wing.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Vibrancy": {
+    "name": "Remove Paralisia",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Chance de remover paralisia em 15%.",
+        "image": "https://www.tibiawiki.com.br/images/2/2c/Imbuement_Vibrancy1.png",
+        "itens": [
+          {
+            "name": "Wereboar Hooves",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Wereboar_Hooves",
+            "image": "https://www.tibiawiki.com.br/images/0/0d/Wereboar_Hooves.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Chance de remover paralisia em 25%.",
+        "image": "https://www.tibiawiki.com.br/images/5/5a/Imbuement_Vibrancy2.png",
+        "itens": [
+          {
+            "name": "Wereboar Hooves",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Wereboar_Hooves",
+            "image": "https://www.tibiawiki.com.br/images/0/0d/Wereboar_Hooves.gif"
+          },
+          {
+            "name": "Crystallized Anger",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Crystallized_Anger",
+            "image": "https://www.tibiawiki.com.br/images/f/f8/Crystallized_Anger.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Chance de remover paralisia em 50%.",
+        "image": "https://www.tibiawiki.com.br/images/1/1a/Imbuement_Vibrancy3.png",
+        "itens": [
+          {
+            "name": "Wereboar Hooves",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Wereboar_Hooves",
+            "image": "https://www.tibiawiki.com.br/images/0/0d/Wereboar_Hooves.gif"
+          },
+          {
+            "name": "Crystallized Anger",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Crystallized_Anger",
+            "image": "https://www.tibiawiki.com.br/images/f/f8/Crystallized_Anger.gif"
+          },
+          {
+            "name": "Quill",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Quill",
+            "image": "https://www.tibiawiki.com.br/images/f/fd/Quill.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Lich Shroud": {
+    "name": "Reduz o dano de Death",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Reduz dano de death em 2%.",
+        "image": "https://www.tibiawiki.com.br/images/7/7b/Imbuement_Protection_Death1.png",
+        "itens": [
+          {
+            "name": "Flask of Embalming Fluid",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Flask_of_Embalming_Fluid",
+            "image": "https://www.tibiawiki.com.br/images/c/c2/Flask_of_Embalming_Fluid.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Reduz dano de death em 5%.",
+        "image": "https://www.tibiawiki.com.br/images/7/7c/Imbuement_Protection_Death2.png",
+        "itens": [
+          {
+            "name": "Flask of Embalming Fluid",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Flask_of_Embalming_Fluid",
+            "image": "https://www.tibiawiki.com.br/images/c/c2/Flask_of_Embalming_Fluid.gif"
+          },
+          {
+            "name": "Gloom Wolf Fur",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Gloom_Wolf_Fur",
+            "image": "https://www.tibiawiki.com.br/images/f/ff/Gloom_Wolf_Fur.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Reduz dano de death em 10%.",
+        "image": "https://www.tibiawiki.com.br/images/f/f8/Imbuement_Protection_Death3.png",
+        "itens": [
+          {
+            "name": "Flask of Embalming Fluid",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Flask_of_Embalming_Fluid",
+            "image": "https://www.tibiawiki.com.br/images/c/c2/Flask_of_Embalming_Fluid.gif"
+          },
+          {
+            "name": "Gloom Wolf Fur",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Gloom_Wolf_Fur",
+            "image": "https://www.tibiawiki.com.br/images/f/ff/Gloom_Wolf_Fur.gif"
+          },
+          {
+            "name": "Mystical Hourglass",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Mystical_Hourglass",
+            "image": "https://www.tibiawiki.com.br/images/0/08/Mystical_Hourglass.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Snake Skin": {
+    "name": "Reduz o dano de Earth",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Reduz dano de earth em 3%.",
+        "image": "https://www.tibiawiki.com.br/images/e/e6/Imbuement_Protection_Earth1.png",
+        "itens": [
+          {
+            "name": "Piece of Swampling Wood",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Piece_of_Swampling_Wood",
+            "image": "https://www.tibiawiki.com.br/images/f/f6/Piece_of_Swampling_Wood.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Reduz dano de earth em 8%.",
+        "image": "https://www.tibiawiki.com.br/images/5/58/Imbuement_Protection_Earth2.png",
+        "itens": [
+          {
+            "name": "Piece of Swampling Wood",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Piece_of_Swampling_Wood",
+            "image": "https://www.tibiawiki.com.br/images/f/f6/Piece_of_Swampling_Wood.gif"
+          },
+          {
+            "name": "Snake Skin",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Snake_Skin",
+            "image": "https://www.tibiawiki.com.br/images/3/3e/Snake_Skin.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Reduz dano de earth em 15%.",
+        "image": "https://www.tibiawiki.com.br/images/f/f3/Imbuement_Protection_Earth3.png",
+        "itens": [
+          {
+            "name": "Piece of Swampling Wood",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Piece_of_Swampling_Wood",
+            "image": "https://www.tibiawiki.com.br/images/f/f6/Piece_of_Swampling_Wood.gif"
+          },
+          {
+            "name": "Snake Skin",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Snake_Skin",
+            "image": "https://www.tibiawiki.com.br/images/3/3e/Snake_Skin.gif"
+          },
+          {
+            "name": "Brimstone Fangs",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Brimstone_Fangs",
+            "image": "https://www.tibiawiki.com.br/images/7/7a/Brimstone_Fangs.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Dragon Hide": {
+    "name": "Reduz o dano de Fire",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Reduz dano de fire em 3%.",
+        "image": "https://www.tibiawiki.com.br/images/6/69/Imbuement_Protection_Fire1.png",
+        "itens": [
+          {
+            "name": "Green Dragon Leather",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Green_Dragon_Leather",
+            "image": "https://www.tibiawiki.com.br/images/d/d9/Green_Dragon_Leather.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Reduz dano de fire em 8%.",
+        "image": "https://www.tibiawiki.com.br/images/c/c4/Imbuement_Protection_Fire2.png",
+        "itens": [
+          {
+            "name": "Green Dragon Leather",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Green_Dragon_Leather",
+            "image": "https://www.tibiawiki.com.br/images/d/d9/Green_Dragon_Leather.gif"
+          },
+          {
+            "name": "Blazing Bone",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Blazing_Bone",
+            "image": "https://www.tibiawiki.com.br/images/0/01/Blazing_Bone.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Reduz dano de fire em 15%.",
+        "image": "https://www.tibiawiki.com.br/images/6/6e/Imbuement_Protection_Fire3.png",
+        "itens": [
+          {
+            "name": "Green Dragon Leather",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Green_Dragon_Leather",
+            "image": "https://www.tibiawiki.com.br/images/d/d9/Green_Dragon_Leather.gif"
+          },
+          {
+            "name": "Blazing Bone",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Blazing_Bone",
+            "image": "https://www.tibiawiki.com.br/images/0/01/Blazing_Bone.gif"
+          },
+          {
+            "name": "Draken Sulphur",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Draken_Sulphur",
+            "image": "https://www.tibiawiki.com.br/images/5/51/Draken_Sulphur.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Quara Scale": {
+    "name": "Reduz o dano de Ice",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Reduz dano de ice em 3%.",
+        "image": "https://www.tibiawiki.com.br/images/9/97/Imbuement_Protection_Ice1.png",
+        "itens": [
+          {
+            "name": "Winter Wolf Fur",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Winter_Wolf_Fur",
+            "image": "https://www.tibiawiki.com.br/images/f/fa/Winter_Wolf_Fur.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Reduz dano de ice em 8%.",
+        "image": "https://www.tibiawiki.com.br/images/9/95/Imbuement_Protection_Ice2.png",
+        "itens": [
+          {
+            "name": "Winter Wolf Fur",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Winter_Wolf_Fur",
+            "image": "https://www.tibiawiki.com.br/images/f/fa/Winter_Wolf_Fur.gif"
+          },
+          {
+            "name": "Thick Fur",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Thick_Fur",
+            "image": "https://www.tibiawiki.com.br/images/f/fc/Thick_Fur.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Reduz dano de ice em 15%.",
+        "image": "https://www.tibiawiki.com.br/images/f/f1/Imbuement_Protection_Ice3.png",
+        "itens": [
+          {
+            "name": "Winter Wolf Fur",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Winter_Wolf_Fur",
+            "image": "https://www.tibiawiki.com.br/images/f/fa/Winter_Wolf_Fur.gif"
+          },
+          {
+            "name": "Thick Fur",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Thick_Fur",
+            "image": "https://www.tibiawiki.com.br/images/f/fc/Thick_Fur.gif"
+          },
+          {
+            "name": "Deepling Warts",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Deepling_Warts",
+            "image": "https://www.tibiawiki.com.br/images/5/54/Deepling_Warts.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Cloud Fabric": {
+    "name": "Reduz o dano de Energy",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Reduz dano de energy em 3%.",
+        "image": "https://www.tibiawiki.com.br/images/3/31/Imbuement_Protection_Energy1.png",
+        "itens": [
+          {
+            "name": "Wyvern Talisman",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Wyvern_Talisman",
+            "image": "https://www.tibiawiki.com.br/images/a/a3/Wyvern_Talisman.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Reduz dano de energy em 8%.",
+        "image": "https://www.tibiawiki.com.br/images/b/b7/Imbuement_Protection_Energy2.png",
+        "itens": [
+          {
+            "name": "Wyvern Talisman",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Wyvern_Talisman",
+            "image": "https://www.tibiawiki.com.br/images/a/a3/Wyvern_Talisman.gif"
+          },
+          {
+            "name": "Crawler Head Plating",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Crawler_Head_Plating",
+            "image": "https://www.tibiawiki.com.br/images/b/be/Crawler_Head_Plating.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Reduz dano de energy em 15%.",
+        "image": "https://www.tibiawiki.com.br/images/1/12/Imbuement_Protection_Energy3.png",
+        "itens": [
+          {
+            "name": "Wyvern Talisman",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Wyvern_Talisman",
+            "image": "https://www.tibiawiki.com.br/images/a/a3/Wyvern_Talisman.gif"
+          },
+          {
+            "name": "Crawler Head Plating",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Crawler_Head_Plating",
+            "image": "https://www.tibiawiki.com.br/images/b/be/Crawler_Head_Plating.gif"
+          },
+          {
+            "name": "Wyrm Scale",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Wyrm_Scale",
+            "image": "https://www.tibiawiki.com.br/images/d/de/Wyrm_Scale.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Demon Presence": {
+    "name": "Reduz o dano de Holy",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Reduz dano de holy em 3%.",
+        "image": "https://www.tibiawiki.com.br/images/b/bc/Imbuement_Protection_Holy1.png",
+        "itens": [
+          {
+            "name": "Cultish Robe",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Cultish_Robe",
+            "image": "https://www.tibiawiki.com.br/images/3/38/Cultish_Robe.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Reduz dano de holy em 8%.",
+        "image": "https://www.tibiawiki.com.br/images/b/be/Imbuement_Protection_Holy2.png",
+        "itens": [
+          {
+            "name": "Cultish Robe",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Cultish_Robe",
+            "image": "https://www.tibiawiki.com.br/images/3/38/Cultish_Robe.gif"
+          },
+          {
+            "name": "Cultish Mask",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Cultish_Mask",
+            "image": "https://www.tibiawiki.com.br/images/4/4c/Cultish_Mask.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Reduz dano de holy em 15%.",
+        "image": "https://www.tibiawiki.com.br/images/4/47/Imbuement_Protection_Holy3.png",
+        "itens": [
+          {
+            "name": "Cultish Robe",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Cultish_Robe",
+            "image": "https://www.tibiawiki.com.br/images/3/38/Cultish_Robe.gif"
+          },
+          {
+            "name": "Cultish Mask",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Cultish_Mask",
+            "image": "https://www.tibiawiki.com.br/images/4/4c/Cultish_Mask.gif"
+          },
+          {
+            "name": "Hellspawn Tail",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Hellspawn_Tail",
+            "image": "https://www.tibiawiki.com.br/images/a/a3/Hellspawn_Tail.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Chop": {
+    "name": "Aumento de Axe Fighting",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua habilidade de axe fighting em 1.",
+        "image": "https://www.tibiawiki.com.br/images/8/80/Imbuement_Skillboost_Axe1.png",
+        "itens": [
+          {
+            "name": "Orc Tooth",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Orc_Tooth",
+            "image": "https://www.tibiawiki.com.br/images/7/70/Orc_Tooth.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de axe fighting em 2.",
+        "image": "https://www.tibiawiki.com.br/images/8/8f/Imbuement_Skillboost_Axe2.png",
+        "itens": [
+          {
+            "name": "Orc Tooth",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Orc_Tooth",
+            "image": "https://www.tibiawiki.com.br/images/7/70/Orc_Tooth.gif"
+          },
+          {
+            "name": "Battle Stone",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Battle_Stone",
+            "image": "https://www.tibiawiki.com.br/images/1/10/Battle_Stone.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de axe fighting em 4.",
+        "image": "https://www.tibiawiki.com.br/images/c/cd/Imbuement_Skillboost_Axe3.png",
+        "itens": [
+          {
+            "name": "Orc Tooth",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Orc_Tooth",
+            "image": "https://www.tibiawiki.com.br/images/7/70/Orc_Tooth.gif"
+          },
+          {
+            "name": "Battle Stone",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Battle_Stone",
+            "image": "https://www.tibiawiki.com.br/images/1/10/Battle_Stone.gif"
+          },
+          {
+            "name": "Moohtant Horn",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Moohtant_Horn",
+            "image": "https://www.tibiawiki.com.br/images/0/0f/Moohtant_Horn.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Bash": {
+    "name": "Aumento de Club Fighting",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua habilidade de club fighting em 1.",
+        "image": "https://www.tibiawiki.com.br/images/4/47/Imbuement_Skillboost_Club1.png",
+        "itens": [
+          {
+            "name": "Cyclops Toe",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Cyclops_Toe",
+            "image": "https://www.tibiawiki.com.br/images/b/bd/Cyclops_Toe.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de club fighting em 2.",
+        "image": "https://www.tibiawiki.com.br/images/f/fb/Imbuement_Skillboost_Club2.png",
+        "itens": [
+          {
+            "name": "Cyclops Toe",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Cyclops_Toe",
+            "image": "https://www.tibiawiki.com.br/images/b/bd/Cyclops_Toe.gif"
+          },
+          {
+            "name": "Ogre Nose Ring",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Ogre_Nose_Ring",
+            "image": "https://www.tibiawiki.com.br/images/9/9b/Ogre_Nose_Ring.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de club fighting em 4.",
+        "image": "https://www.tibiawiki.com.br/images/7/77/Imbuement_Skillboost_Club3.png",
+        "itens": [
+          {
+            "name": "Cyclops Toe",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Cyclops_Toe",
+            "image": "https://www.tibiawiki.com.br/images/b/bd/Cyclops_Toe.gif"
+          },
+          {
+            "name": "Ogre Nose Ring",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Ogre_Nose_Ring",
+            "image": "https://www.tibiawiki.com.br/images/9/9b/Ogre_Nose_Ring.gif"
+          },
+          {
+            "name": "Warmaster's Wristguards",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Warmaster%27s_Wristguards",
+            "image": "https://www.tibiawiki.com.br/images/4/48/Warmaster%27s_Wristguards.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Precision": {
+    "name": "Aumento de Distance Fighting",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua habilidade de distance fighting em 1.",
+        "image": "https://www.tibiawiki.com.br/images/2/2f/Imbuement_Skillboost_Distance1.png",
+        "itens": [
+          {
+            "name": "Elven Scouting Glass",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Elven_Scouting_Glass",
+            "image": "https://www.tibiawiki.com.br/images/c/cf/Elven_Scouting_Glass.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de distance fighting em 2.",
+        "image": "https://www.tibiawiki.com.br/images/c/c6/Imbuement_Skillboost_Distance2.png",
+        "itens": [
+          {
+            "name": "Elven Scouting Glass",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Elven_Scouting_Glass",
+            "image": "https://www.tibiawiki.com.br/images/c/cf/Elven_Scouting_Glass.gif"
+          },
+          {
+            "name": "Elven Hoof",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Elven_Hoof",
+            "image": "https://www.tibiawiki.com.br/images/c/ca/Elven_Hoof.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de distance fighting em 4.",
+        "image": "https://www.tibiawiki.com.br/images/3/3c/Imbuement_Skillboost_Distance3.png",
+        "itens": [
+          {
+            "name": "Elven Scouting Glass",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Elven_Scouting_Glass",
+            "image": "https://www.tibiawiki.com.br/images/c/cf/Elven_Scouting_Glass.gif"
+          },
+          {
+            "name": "Elven Hoof",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Elven_Hoof",
+            "image": "https://www.tibiawiki.com.br/images/c/ca/Elven_Hoof.gif"
+          },
+          {
+            "name": "Metal Spike",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Metal_Spike",
+            "image": "https://www.tibiawiki.com.br/images/c/cf/Metal_Spike.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Epiphany": {
+    "name": "Aumento de Magic Level",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua habilidade de Magic Level em 1.",
+        "image": "https://www.tibiawiki.com.br/images/f/fd/Imbuement_Skillboost_Magic1.png",
+        "itens": [
+          {
+            "name": "Elvish Talisman",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Elvish_Talisman",
+            "image": "https://www.tibiawiki.com.br/images/a/a4/Elvish_Talisman.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de Magic Level em 2.",
+        "image": "https://www.tibiawiki.com.br/images/f/f2/Imbuement_Skillboost_Magic2.png",
+        "itens": [
+          {
+            "name": "Elvish Talisman",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Elvish_Talisman",
+            "image": "https://www.tibiawiki.com.br/images/a/a4/Elvish_Talisman.gif"
+          },
+          {
+            "name": "Broken Shamanic Staff",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Broken_Shamanic_Staff",
+            "image": "https://www.tibiawiki.com.br/images/2/29/Broken_Shamanic_Staff.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de Magic Level em 4.",
+        "image": "https://www.tibiawiki.com.br/images/6/6a/Imbuement_Skillboost_Magic3.png",
+        "itens": [
+          {
+            "name": "Elvish Talisman",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Elvish_Talisman",
+            "image": "https://www.tibiawiki.com.br/images/a/a4/Elvish_Talisman.gif"
+          },
+          {
+            "name": "Broken Shamanic Staff",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Broken_Shamanic_Staff",
+            "image": "https://www.tibiawiki.com.br/images/2/29/Broken_Shamanic_Staff.gif"
+          },
+          {
+            "name": "Strand of Medusa Hair",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Strand_of_Medusa_Hair",
+            "image": "https://www.tibiawiki.com.br/images/5/57/Strand_of_Medusa_Hair.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Blockade": {
+    "name": "Aumento de Shielding",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua habilidade de shielding em 1.",
+        "image": "https://www.tibiawiki.com.br/images/2/22/Imbuement_Skillboost_Shielding1.png",
+        "itens": [
+          {
+            "name": "Piece of Scarab Shell",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Piece_of_Scarab_Shell",
+            "image": "https://www.tibiawiki.com.br/images/4/45/Piece_of_Scarab_Shell.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de shielding em 2.",
+        "image": "https://www.tibiawiki.com.br/images/d/da/Imbuement_Skillboost_Shielding2.png",
+        "itens": [
+          {
+            "name": "Piece of Scarab Shell",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Piece_of_Scarab_Shell",
+            "image": "https://www.tibiawiki.com.br/images/4/45/Piece_of_Scarab_Shell.gif"
+          },
+          {
+            "name": "Brimstone Shell",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Brimstone_Shell",
+            "image": "https://www.tibiawiki.com.br/images/d/d9/Brimstone_Shell.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de shielding em 4.",
+        "image": "https://www.tibiawiki.com.br/images/a/a6/Imbuement_Skillboost_Shielding3.png",
+        "itens": [
+          {
+            "name": "Piece of Scarab Shell",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Piece_of_Scarab_Shell",
+            "image": "https://www.tibiawiki.com.br/images/4/45/Piece_of_Scarab_Shell.gif"
+          },
+          {
+            "name": "Brimstone Shell",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Brimstone_Shell",
+            "image": "https://www.tibiawiki.com.br/images/d/d9/Brimstone_Shell.gif"
+          },
+          {
+            "name": "Frazzle Skin",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Frazzle_Skin",
+            "image": "https://www.tibiawiki.com.br/images/d/d6/Frazzle_Skin.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Slash": {
+    "name": "Aumento de Sword Fighting",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua habilidade de sword fighting em 1.",
+        "image": "https://www.tibiawiki.com.br/images/2/26/Imbuement_Skillboost_Sword1.png",
+        "itens": [
+          {
+            "name": "Lion's Mane",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Lion%27s_Mane",
+            "image": "https://www.tibiawiki.com.br/images/0/04/Lion%27s_Mane.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de sword fighting em 2.",
+        "image": "https://www.tibiawiki.com.br/images/7/7e/Imbuement_Skillboost_Sword2.png",
+        "itens": [
+          {
+            "name": "Lion's Mane",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Lion%27s_Mane",
+            "image": "https://www.tibiawiki.com.br/images/0/04/Lion%27s_Mane.gif"
+          },
+          {
+            "name": "Mooh'tah Shell",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Mooh%27tah_Shell",
+            "image": "https://www.tibiawiki.com.br/images/b/b2/Mooh%27tah_Shell.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de sword fighting em 4.",
+        "image": "https://www.tibiawiki.com.br/images/3/36/Imbuement_Skillboost_Sword3.png",
+        "itens": [
+          {
+            "name": "Lion's Mane",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Lion%27s_Mane",
+            "image": "https://www.tibiawiki.com.br/images/0/04/Lion%27s_Mane.gif"
+          },
+          {
+            "name": "Mooh'tah Shell",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Mooh%27tah_Shell",
+            "image": "https://www.tibiawiki.com.br/images/b/b2/Mooh%27tah_Shell.gif"
+          },
+          {
+            "name": "War Crystal",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/War_Crystal",
+            "image": "https://www.tibiawiki.com.br/images/4/41/War_Crystal.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Punch": {
+    "name": "Aumento de Fist Fighting",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Aumenta sua habilidade de fist fighting em 1.",
+        "image": "https://www.tibiawiki.com.br/images/6/62/Imbuement_Skillboost_Fist1.png",
+        "itens": [
+          {
+            "name": "Tarantula Egg",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Tarantula_Egg",
+            "image": "https://www.tibiawiki.com.br/images/d/dc/Tarantula_Egg.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de fist fighting em 2.",
+        "image": "https://www.tibiawiki.com.br/images/d/de/Imbuement_Skillboost_Fist2.png",
+        "itens": [
+          {
+            "name": "Tarantula Egg",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Tarantula_Egg",
+            "image": "https://www.tibiawiki.com.br/images/d/dc/Tarantula_Egg.gif"
+          },
+          {
+            "name": "Mantassin Tail",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Mantassin_Tail",
+            "image": "https://www.tibiawiki.com.br/images/3/37/Mantassin_Tail.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Aumenta sua habilidade de fist fighting em 4.",
+        "image": "https://www.tibiawiki.com.br/images/7/74/Imbuement_Skillboost_Fist3.png",
+        "itens": [
+          {
+            "name": "Tarantula Egg",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Tarantula_Egg",
+            "image": "https://www.tibiawiki.com.br/images/d/dc/Tarantula_Egg.gif"
+          },
+          {
+            "name": "Mantassin Tail",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Mantassin_Tail",
+            "image": "https://www.tibiawiki.com.br/images/3/37/Mantassin_Tail.gif"
+          },
+          {
+            "name": "Gold-Brocaded Cloth",
+            "quantity": 15,
+            "link": "https://www.tibiawiki.com.br/wiki/Gold-Brocaded_Cloth",
+            "image": "https://www.tibiawiki.com.br/images/7/79/Gold-Brocaded_Cloth.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Reap": {
+    "name": "Dano de Death",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Converte 10% de dano físico em dano de death.",
+        "image": "https://www.tibiawiki.com.br/images/f/fb/Imbuement_Damage_Death1.png",
+        "itens": [
+          {
+            "name": "Pile of Grave Earth",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Pile_of_Grave_Earth",
+            "image": "https://www.tibiawiki.com.br/images/6/65/Pile_of_Grave_Earth.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Converte 25% de dano físico em dano de death.",
+        "image": "https://www.tibiawiki.com.br/images/c/c0/Imbuement_Damage_Death2.png",
+        "itens": [
+          {
+            "name": "Pile of Grave Earth",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Pile_of_Grave_Earth",
+            "image": "https://www.tibiawiki.com.br/images/6/65/Pile_of_Grave_Earth.gif"
+          },
+          {
+            "name": "Demonic Skeletal Hand",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Demonic_Skeletal_Hand",
+            "image": "https://www.tibiawiki.com.br/images/8/8f/Demonic_Skeletal_Hand.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Converte 50% de dano físico em dano de death.",
+        "image": "https://www.tibiawiki.com.br/images/5/5e/Imbuement_Damage_Death3.png",
+        "itens": [
+          {
+            "name": "Pile of Grave Earth",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Pile_of_Grave_Earth",
+            "image": "https://www.tibiawiki.com.br/images/6/65/Pile_of_Grave_Earth.gif"
+          },
+          {
+            "name": "Demonic Skeletal Hand",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Demonic_Skeletal_Hand",
+            "image": "https://www.tibiawiki.com.br/images/8/8f/Demonic_Skeletal_Hand.gif"
+          },
+          {
+            "name": "Petrified Scream",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Petrified_Scream",
+            "image": "https://www.tibiawiki.com.br/images/0/0f/Petrified_Scream.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Venom": {
+    "name": "Dano de Earth",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Converte 10% de dano físico em dano de earth.",
+        "image": "https://www.tibiawiki.com.br/images/6/68/Imbuement_Damage_Earth1.png",
+        "itens": [
+          {
+            "name": "Swamp Grass",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Swamp_Grass",
+            "image": "https://www.tibiawiki.com.br/images/6/6f/Swamp_Grass.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Converte 25% de dano físico em dano de earth.",
+        "image": "https://www.tibiawiki.com.br/images/f/f9/Imbuement_Damage_Earth2.png",
+        "itens": [
+          {
+            "name": "Swamp Grass",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Swamp_Grass",
+            "image": "https://www.tibiawiki.com.br/images/6/6f/Swamp_Grass.gif"
+          },
+          {
+            "name": "Poisonous Slime",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Poisonous_Slime",
+            "image": "https://www.tibiawiki.com.br/images/b/b9/Poisonous_Slime.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Converte 50% de dano físico em dano de earth.",
+        "image": "https://www.tibiawiki.com.br/images/1/15/Imbuement_Damage_Earth3.png",
+        "itens": [
+          {
+            "name": "Swamp Grass",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Swamp_Grass",
+            "image": "https://www.tibiawiki.com.br/images/6/6f/Swamp_Grass.gif"
+          },
+          {
+            "name": "Poisonous Slime",
+            "quantity": 20,
+            "link": "https://www.tibiawiki.com.br/wiki/Poisonous_Slime",
+            "image": "https://www.tibiawiki.com.br/images/b/b9/Poisonous_Slime.gif"
+          },
+          {
+            "name": "Slime Heart",
+            "quantity": 2,
+            "link": "https://www.tibiawiki.com.br/wiki/Slime_Heart",
+            "image": "https://www.tibiawiki.com.br/images/6/65/Slime_Heart.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Scorch": {
+    "name": "Dano de Fire",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Converte 10% de dano físico em dano de fire.",
+        "image": "https://www.tibiawiki.com.br/images/1/19/Imbuement_Damage_Fire1.png",
+        "itens": [
+          {
+            "name": "Fiery Heart",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Fiery_Heart",
+            "image": "https://www.tibiawiki.com.br/images/7/7d/Fiery_Heart.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Converte 25% de dano físico em dano de fire.",
+        "image": "https://www.tibiawiki.com.br/images/a/a5/Imbuement_Damage_Fire2.png",
+        "itens": [
+          {
+            "name": "Fiery Heart",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Fiery_Heart",
+            "image": "https://www.tibiawiki.com.br/images/7/7d/Fiery_Heart.gif"
+          },
+          {
+            "name": "Green Dragon Scale",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Green_Dragon_Scale",
+            "image": "https://www.tibiawiki.com.br/images/a/ac/Green_Dragon_Scale.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Converte 50% de dano físico em dano de fire.",
+        "image": "https://www.tibiawiki.com.br/images/0/0a/Imbuement_Damage_Fire3.png",
+        "itens": [
+          {
+            "name": "Fiery Heart",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Fiery_Heart",
+            "image": "https://www.tibiawiki.com.br/images/7/7d/Fiery_Heart.gif"
+          },
+          {
+            "name": "Green Dragon Scale",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Green_Dragon_Scale",
+            "image": "https://www.tibiawiki.com.br/images/a/ac/Green_Dragon_Scale.gif"
+          },
+          {
+            "name": "Demon Horn",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Demon_Horn",
+            "image": "https://www.tibiawiki.com.br/images/b/b8/Demon_Horn.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Frost": {
+    "name": "Dano de Ice",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Converte 10% de dano físico em dano de ice.",
+        "image": "https://www.tibiawiki.com.br/images/1/17/Imbuement_Damage_Ice1.png",
+        "itens": [
+          {
+            "name": "Frosty Heart",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Frosty_Heart",
+            "image": "https://www.tibiawiki.com.br/images/8/83/Frosty_Heart.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Converte 25% de dano físico em dano de ice.",
+        "image": "https://www.tibiawiki.com.br/images/a/ac/Imbuement_Damage_Ice2.png",
+        "itens": [
+          {
+            "name": "Frosty Heart",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Frosty_Heart",
+            "image": "https://www.tibiawiki.com.br/images/8/83/Frosty_Heart.gif"
+          },
+          {
+            "name": "Seacrest Hair",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Seacrest_Hair",
+            "image": "https://www.tibiawiki.com.br/images/6/6e/Seacrest_Hair.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Converte 50% de dano físico em dano de ice.",
+        "image": "https://www.tibiawiki.com.br/images/f/fe/Imbuement_Damage_Ice3.png",
+        "itens": [
+          {
+            "name": "Frosty Heart",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Frosty_Heart",
+            "image": "https://www.tibiawiki.com.br/images/8/83/Frosty_Heart.gif"
+          },
+          {
+            "name": "Seacrest Hair",
+            "quantity": 10,
+            "link": "https://www.tibiawiki.com.br/wiki/Seacrest_Hair",
+            "image": "https://www.tibiawiki.com.br/images/6/6e/Seacrest_Hair.gif"
+          },
+          {
+            "name": "Polar Bear Paw",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Polar%20Bear%20Paw",
+            "image": "https://www.tibiawiki.com.br/images/3/3e/Polar_Bear_Paw.gif"
+          }
+        ]
+      }
+    }
+  },
+  "Electrify": {
+    "name": "Dano de Energy",
+    "level": {
+      "Basic": {
+        "name": "Basic Imbument",
+        "premium": false,
+        "description": "Converte 10% de dano físico em dano de energy.",
+        "image": "https://www.tibiawiki.com.br/images/4/45/Imbuement_Damage_Energy1.png",
+        "itens": [
+          {
+            "name": "Rorc Feather",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Rorc_Feather",
+            "image": "https://www.tibiawiki.com.br/images/b/b8/Rorc_Feather.gif"
+          }
+        ]
+      },
+      "Intricate": {
+        "name": "Intricate Imbument",
+        "premium": true,
+        "description": "Converte 25% de dano físico em dano de energy.",
+        "image": "https://www.tibiawiki.com.br/images/0/0b/Imbuement_Damage_Energy2.png",
+        "itens": [
+          {
+            "name": "Rorc Feather",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Rorc_Feather",
+            "image": "https://www.tibiawiki.com.br/images/b/b8/Rorc_Feather.gif"
+          },
+          {
+            "name": "Peacock Feather Fan",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Peacock_Feather_Fan",
+            "image": "https://www.tibiawiki.com.br/images/f/fc/Peacock_Feather_Fan.gif"
+          }
+        ]
+      },
+      "Powerful": {
+        "name": "Powerful Imbument",
+        "premium": true,
+        "description": "Converte 50% de dano físico em dano de energy.",
+        "image": "https://www.tibiawiki.com.br/images/4/48/Imbuement_Damage_Energy3.png",
+        "itens": [
+          {
+            "name": "Rorc Feather",
+            "quantity": 25,
+            "link": "https://www.tibiawiki.com.br/wiki/Rorc_Feather",
+            "image": "https://www.tibiawiki.com.br/images/b/b8/Rorc_Feather.gif"
+          },
+          {
+            "name": "Peacock Feather Fan",
+            "quantity": 5,
+            "link": "https://www.tibiawiki.com.br/wiki/Peacock_Feather_Fan",
+            "image": "https://www.tibiawiki.com.br/images/f/fc/Peacock_Feather_Fan.gif"
+          },
+          {
+            "name": "Energy Vein",
+            "quantity": 1,
+            "link": "https://www.tibiawiki.com.br/wiki/Energy_Vein",
+            "image": "https://www.tibiawiki.com.br/images/d/dc/Energy_Vein.gif"
+          }
+        ]
+      }
+    }
+  }
+}
