@@ -4,6 +4,8 @@
 title = Tibia Tools
 
 # (str) Package name
+presplash.filename = assets/presplash.jpg
+android.presplash_color = #000000
 icon.filename = assets/icon.png
 package.name = tibiatools
 
