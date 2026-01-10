@@ -36,7 +36,7 @@ try:
     from core.boosted import fetch_boosted
     from core.training import TrainingInput, compute_training_plan
     from core.hunt import parse_hunt_session_text
-    from core.imbuements import fetch_imbuements_table, ImbuementEntry
+    from core.imbuements import fetch_imbuements_table, fetch_imbuement_details, ImbuementEntry
 except Exception:
     _CORE_IMPORT_ERROR = traceback.format_exc()
 
@@ -592,7 +592,7 @@ class TibiaToolsApp(MDApp):
     # --------------------
     # Imbuements
     # --------------------
-    def _imbuements_load(self, force_refresh=False):
+    def _imbuements_load(self):
         scr = self.root.get_screen("imbuements")
         scr.entries = []
         scr.ids.imb_status.text = "Carregando (TibiaWiki)..."
@@ -627,13 +627,84 @@ class TibiaToolsApp(MDApp):
             scr.ids.imb_list.add_widget(item)
 
     def _imbu_show(self, ent: ImbuementEntry):
-        text = f"Basic:\n{ent.basic}\n\nIntricate:\n{ent.intricate}\n\nPowerful:\n{ent.powerful}\n\n(Fonte: TibiaWiki)"
+        # Abre primeiro com placeholder e depois carrega os itens (sob demanda)
+        title = (ent.name or "").strip()
+
         dlg = MDDialog(
-            title=ent.name,
-            text=text,
-            buttons=[MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())],
+            title=title,
+            text="Carregando detalhes...",
+            buttons=[
+                MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())
+            ],
         )
         dlg.open()
+
+        def run():
+            try:
+                page = (getattr(ent, "page", "") or "").strip()
+                if not page:
+                    page = title.replace(" ", "_")
+
+                ok, data = fetch_imbuement_details(page)
+                if not ok:
+                    msg = f"Erro ao carregar detalhes:\n{data}"
+                    Clock.schedule_once(lambda *_: setattr(dlg, "text", msg), 0)
+                    return
+
+                tiers = data  # dict com basic/intricate/powerful
+
+                def fmt(tkey: str, label: str) -> str:
+                    tier = tiers.get(tkey, "") if isinstance(tiers, dict) else ""
+
+                    # Compat: se vier string já formatada (versões antigas)
+                    if isinstance(tier, str):
+                        s = tier.strip()
+                        return f"{label}:\n" + (s if s else "(não encontrado)")
+
+                    if not isinstance(tier, dict):
+                        tier = {}
+
+                    effect = str(tier.get("effect", "")).strip()
+                    items = tier.get("items", []) or []
+
+                    out_lines = []
+                    if effect and effect != "-":
+                        out_lines.append(f"Efeito: {effect}")
+
+                    if items:
+                        out_lines.append("Itens:")
+                        for it in items[:50]:
+                            if isinstance(it, dict):
+                                nm = it.get("name") or it.get("nome") or it.get("item") or ""
+                                qty = it.get("quantity") or it.get("quantidade") or it.get("qtd") or ""
+                                nm = str(nm).strip()
+                                qty = str(qty).strip()
+                                if nm and qty and qty != "0":
+                                    out_lines.append(f"- {qty}x {nm}")
+                                elif nm:
+                                    out_lines.append(f"- {nm}")
+                                else:
+                                    out_lines.append(f"- {it}")
+                            else:
+                                out_lines.append(f"- {it}")
+                    else:
+                        out_lines.append("Itens: (não encontrado)")
+
+                    return f"{label}:\n" + "\n".join(out_lines)
+
+                text = (
+                    fmt("basic", "Basic")
+                    + "\n\n"
+                    + fmt("intricate", "Intricate")
+                    + "\n\n"
+                    + fmt("powerful", "Powerful")
+                    + "\n\n(Fonte: TibiaWiki BR)"
+                )
+                Clock.schedule_once(lambda *_: setattr(dlg, "text", text), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda *_: setattr(dlg, "text", f"Erro: {e}"), 0)
+
+        threading.Thread(target=run, daemon=True).start()
 
 
 if __name__ == "__main__":
