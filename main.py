@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import threading
 import webbrowser
+import re
+import urllib.parse
 import traceback
 import math
 from typing import List, Optional
@@ -26,6 +28,10 @@ from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
 from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
 from kivymd.uix.menu import MDDropdownMenu
+from kivy.uix.behaviors import ButtonBehavior
+from kivymd.uix.card import MDCard
+from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.label import MDLabel, MDIcon
 
 # ---- IMPORTS DO CORE (com proteção para não “fechar sozinho” no Android) ----
 _CORE_IMPORT_ERROR = None
@@ -36,11 +42,16 @@ try:
     from core.boosted import fetch_boosted
     from core.training import TrainingInput, compute_training_plan
     from core.hunt import parse_hunt_session_text
-    from core.imbuements import fetch_imbuements_table, fetch_imbuement_details, ImbuementEntry
+    from core.imbuements import fetch_imbuements_table, ImbuementEntry
 except Exception:
     _CORE_IMPORT_ERROR = traceback.format_exc()
 
 KV_FILE = "tibia_tools.kv"
+
+
+class ClickableCard(ButtonBehavior, MDCard):
+    """MDCard clicável (garante on_release em todas as versões do KivyMD)."""
+    pass
 
 
 class RootSM(ScreenManager):
@@ -385,6 +396,23 @@ class TibiaToolsApp(MDApp):
         if self._menu_world:
             self._menu_world.dismiss()
 
+    def _boss_tibiawiki_br_url(self, boss_name: str) -> str:
+        # TibiaWiki BR usa espaços como "_" na URL. Mantém caracteres comuns e faz encode do resto.
+        name = (boss_name or "").strip()
+        name = re.sub(r"\s+", " ", name)
+        slug = name.replace(" ", "_")
+        slug = urllib.parse.quote(slug, safe="()'’_-")
+        return f"https://www.tibiawiki.com.br/wiki/{slug}"
+
+    def open_boss_wiki(self, boss_name: str):
+        url = self._boss_tibiawiki_br_url(boss_name)
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            self.toast(f"Não foi possível abrir o link: {e}")
+
+
+
     def bosses_fetch(self):
         scr = self.root.get_screen("bosses")
         world = (scr.ids.world_field.text or "").strip()
@@ -405,20 +433,82 @@ class TibiaToolsApp(MDApp):
         threading.Thread(target=run, daemon=True).start()
 
     def _bosses_done(self, bosses):
+
         scr = self.root.get_screen("bosses")
         scr.ids.boss_list.clear_widgets()
         if not bosses:
             scr.ids.boss_status.text = "Nada encontrado (ou ExevoPan indisponível)."
             return
+
         scr.ids.boss_status.text = f"Encontrado(s): {len(bosses)}"
+
         for b in bosses[:200]:
-            title = b.get("boss") or b.get("name") or "Boss"
-            chance = b.get("chance") or ""
-            status = b.get("status") or ""
-            extra = " | ".join([x for x in [chance, status] if x])
-            item = OneLineIconListItem(text=f"{title}{(' - ' + extra) if extra else ''}")
-            item.add_widget(IconLeftWidget(icon="skull"))
-            scr.ids.boss_list.add_widget(item)
+            title = (b.get("boss") or b.get("name") or "Boss").strip()
+            chance = (b.get("chance") or "").strip()
+            status = (b.get("status") or "").strip()
+
+            details_parts = [x for x in [chance, status] if x]
+            details = " | ".join(details_parts) if details_parts else ""
+
+            card = ClickableCard(
+                orientation="horizontal",
+                size_hint_y=None,
+                padding=(dp(12), dp(10), dp(12), dp(10)),
+                radius=[dp(14)],
+            )
+
+            icon = MDIcon(
+                icon="skull",
+                size_hint=(None, None),
+                size=(dp(24), dp(24)),
+                pos_hint={"center_y": 0.5},
+            )
+            card.add_widget(icon)
+
+            box = MDBoxLayout(
+                orientation="vertical",
+                size_hint_y=None,
+                spacing=dp(2),
+                padding=(dp(12), 0, 0, 0),
+            )
+
+            lbl_title = MDLabel(
+                text=title,
+                font_style="Subtitle1",
+                theme_text_color="Primary",
+                halign="left",
+                size_hint_y=None,
+            )
+            lbl_details = MDLabel(
+                text=details,
+                font_style="Caption",
+                theme_text_color="Secondary",
+                halign="left",
+                size_hint_y=None,
+            )
+
+            box.add_widget(lbl_title)
+            box.add_widget(lbl_details)
+            card.add_widget(box)
+
+            card.bind(on_release=lambda *_ , n=title: self.open_boss_wiki(n))
+
+            scr.ids.boss_list.add_widget(card)
+
+            def _update_sizes(*_args, _card=card, _box=box, _t=lbl_title, _d=lbl_details):
+                _t.text_size = (_box.width, None)
+                _d.text_size = (_box.width, None)
+
+                _t.texture_update()
+                _d.texture_update()
+
+                _t.height = _t.texture_size[1]
+                _d.height = _d.texture_size[1] if _d.text else 0
+
+                _box.height = _t.height + (_d.height if _d.height else 0) + dp(2)
+                _card.height = max(dp(56), _box.height + dp(20))
+
+            Clock.schedule_once(_update_sizes, 0)
 
     # --------------------
     # Boosted
@@ -595,7 +685,7 @@ class TibiaToolsApp(MDApp):
     def _imbuements_load(self):
         scr = self.root.get_screen("imbuements")
         scr.entries = []
-        scr.ids.imb_status.text = "Carregando (offline)..."
+        scr.ids.imb_status.text = "Carregando (TibiaWiki)..."
         scr.ids.imb_list.clear_widgets()
 
         def run():
@@ -627,66 +717,13 @@ class TibiaToolsApp(MDApp):
             scr.ids.imb_list.add_widget(item)
 
     def _imbu_show(self, ent: ImbuementEntry):
-        # Abre primeiro com placeholder e depois carrega os itens (sob demanda)
-        title = (ent.name or "").strip()
-
+        text = f"Basic:\n{ent.basic}\n\nIntricate:\n{ent.intricate}\n\nPowerful:\n{ent.powerful}\n\n(Fonte: TibiaWiki)"
         dlg = MDDialog(
-            title=title,
-            text="Carregando detalhes...",
-            buttons=[
-                MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())
-            ],
+            title=ent.name,
+            text=text,
+            buttons=[MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())],
         )
         dlg.open()
-
-        def run():
-            try:
-                page = (ent.page or "").strip()
-                if not page:
-                    page = title.replace(" ", "_")
-
-                ok, data = fetch_imbuement_details(page)
-                if not ok:
-                    msg = f"Erro ao carregar detalhes:\n{data}"
-                    Clock.schedule_once(lambda *_: setattr(dlg, "text", msg), 0)
-                    return
-
-                tiers = data  # dict com basic/intricate/powerful
-
-                def fmt(tkey: str, label: str) -> str:
-                    tier = tiers.get(tkey, {}) if isinstance(tiers, dict) else {}
-
-                    def clean(s: str) -> str:
-                        # Converte sequências literais (ex.: "\\n") em quebras de linha reais
-                        return (s or "").replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").strip()
-
-                    effect = clean(str(tier.get("effect", "")))
-                    items = tier.get("items", []) or []
-
-                    out_lines = [f"{label}:"]
-                    if effect:
-                        out_lines.append(f"Efeito: {effect}")
-                    if items:
-                        out_lines.append("Itens:")
-                        for it in items[:50]:
-                            out_lines.append(f"• {clean(str(it))}")
-                    else:
-                        out_lines.append("Itens: (não encontrado)")
-                    return "\n".join(out_lines)
-
-                text = (
-                    fmt("basic", "Basic")
-                    + "\n\n"
-                    + fmt("intricate", "Intricate")
-                    + "\n\n"
-                    + fmt("powerful", "Powerful")
-                    + "\n\n(Fonte: TibiaWiki BR)"
-                )
-                Clock.schedule_once(lambda *_: setattr(dlg, "text", text), 0)
-            except Exception as e:
-                Clock.schedule_once(lambda *_: setattr(dlg, "text", f"Erro: {e}"), 0)
-
-        threading.Thread(target=run, daemon=True).start()
 
 
 if __name__ == "__main__":
