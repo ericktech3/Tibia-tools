@@ -18,6 +18,8 @@ RootSM:
         name: "imbuements"
     HuntScreen:
         name: "hunt"
+    StaminaScreen:
+        name: "stamina"
 
 
 <HomeScreen@MDScreen>:
@@ -158,6 +160,10 @@ RootSM:
                             text: "Imbuements"
                             icon: "flash"
                             on_release: app.open_more_target("imbuements")
+                        MoreItem:
+                            text: "Stamina"
+                            icon: "timer-outline"
+                            on_release: app.open_more_target("stamina")
                         MoreItem:
                             text: "Hunt Analyzer"
                             icon: "chart-bar"
@@ -476,3 +482,94 @@ RootSM:
                     readonly: True
                     size_hint_y: None
                     height: dp(260)
+
+
+<StaminaScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Stamina"
+            left_action_items: [["arrow-left", lambda x: app.back_home()]]
+            elevation: 2
+
+        ScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(10)
+                size_hint_y: None
+                height: self.minimum_height
+
+                MDLabel:
+                    text: "Calculadora de Stamina (offline)"
+                    bold: True
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(6)
+
+                MDLabel:
+                    text: "A regeneração começa 10 min após deslogar. Até 39:00 é mais rápida; de 39:00 a 42:00 (bônus/verde) é mais lenta."
+                    halign: "left"
+                    valign: "top"
+                    text_size: self.width, None
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(10)
+
+                MDLabel:
+                    text: "Stamina atual"
+                    size_hint_y: None
+                    height: dp(20)
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(56)
+                    spacing: dp(8)
+
+                    MDTextField:
+                        id: stam_cur_h
+                        hint_text: "Horas"
+                        mode: "rectangle"
+                        input_filter: "int"
+
+                    MDTextField:
+                        id: stam_cur_m
+                        hint_text: "Min"
+                        mode: "rectangle"
+                        input_filter: "int"
+
+                MDLabel:
+                    text: "Stamina desejada"
+                    size_hint_y: None
+                    height: dp(20)
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(56)
+                    spacing: dp(8)
+
+                    MDTextField:
+                        id: stam_tgt_h
+                        hint_text: "Horas"
+                        mode: "rectangle"
+                        input_filter: "int"
+
+                    MDTextField:
+                        id: stam_tgt_m
+                        hint_text: "Min"
+                        mode: "rectangle"
+                        input_filter: "int"
+
+                MDRaisedButton:
+                    text: "Calcular"
+                    on_release: app.stamina_calculate()
+
+                MDLabel:
+                    id: stam_result
+                    text: ""
+                    halign: "left"
+                    valign: "top"
+                    text_size: self.width, None
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(20)

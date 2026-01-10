@@ -12,6 +12,7 @@ import threading
 import webbrowser
 import traceback
 import math
+from datetime import datetime, timedelta
 from urllib.parse import quote
 from typing import List, Optional
 
@@ -38,6 +39,7 @@ try:
     from core.training import TrainingInput, compute_training_plan
     from core.hunt import parse_hunt_session_text
     from core.imbuements import fetch_imbuements_table, fetch_imbuement_details, ImbuementEntry
+    from core.stamina import parse_hm_text, compute_offline_regen, format_hm
 except Exception:
     _CORE_IMPORT_ERROR = traceback.format_exc()
 
@@ -351,6 +353,56 @@ class TibiaToolsApp(MDApp):
         home.ids.share_result.text = (
             f"Seu level: {level}\n"
             f"Pode sharear com: {min_level} até {max_level}"
+        )
+
+    # --------------------
+    # Stamina (offline)
+    # --------------------
+    def stamina_calculate(self):
+        """Calcula quanto tempo ficar offline para atingir a stamina desejada.
+
+        Regra usada:
+        - a regeneração começa 10 minutos após deslogar;
+        - até 39:00: 1 min stamina / 3 min offline;
+        - de 39:00 a 42:00: 1 min stamina / 6 min offline.
+        """
+        scr = self.root.get_screen("stamina")
+
+        try:
+            cur_min = parse_hm_text(scr.ids.stam_cur_h.text, scr.ids.stam_cur_m.text)
+            tgt_min = parse_hm_text(scr.ids.stam_tgt_h.text, scr.ids.stam_tgt_m.text)
+        except Exception as e:
+            self.toast(str(e))
+            return
+
+        res = compute_offline_regen(cur_min, tgt_min)
+        now = datetime.now()
+
+        if res.offline_needed_min <= 0:
+            scr.ids.stam_result.text = (
+                f"Stamina atual: {format_hm(res.current_min)}\n"
+                f"Stamina alvo: {format_hm(res.target_min)}\n\n"
+                "Você já está no alvo."
+            )
+            return
+
+        offline_total = res.offline_needed_min
+        offline_h = offline_total // 60
+        offline_m = offline_total % 60
+
+        regen_only = res.regen_offline_only_min
+        regen_h = regen_only // 60
+        regen_m = regen_only % 60
+
+        reached_at = now + timedelta(minutes=offline_total)
+
+        scr.ids.stam_result.text = (
+            f"Stamina atual: {format_hm(res.current_min)}\n"
+            f"Stamina alvo: {format_hm(res.target_min)}\n\n"
+            f"Tempo offline necessário: {offline_h}h {offline_m:02d}min\n"
+            f"(Regeneração: {regen_h}h {regen_m:02d}min + 10min iniciais)\n\n"
+            f"Você terá {format_hm(res.target_min)} em: {reached_at.strftime('%d/%m %H:%M')}\n"
+            "(considerando que você desloga agora)"
         )
 
     # --------------------
