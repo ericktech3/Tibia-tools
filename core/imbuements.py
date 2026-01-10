@@ -1,32 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-Imbuements (TibiaWiki BR)
+Imbuements (TibiaWiki BR) — modo offline (seed embutido)
 
-⚠️ Importante: este módulo PRECISA ser importável no Android.
-Por isso:
-- não usa sintaxe nova (PEP604 |, list[str], etc.)
-- não faz requests no import (rede só dentro das funções)
-- expõe ImbuementEntry + fetch_imbuements_table + fetch_imbuement_details
+Motivação:
+- A TibiaWiki frequentemente retorna 403 para requisições "automatizadas" (app/requests),
+  quebrando a aba de Imbuements.
+- Para distribuir o APK pra guild sem ninguém ter que "importar arquivo", este módulo
+  carrega um snapshot (seed) EMBUTIDO no app: core/data/imbuements_seed.json.
 
-Fonte preferencial:
-- JSON oficial da TibiaWiki BR: Tibia_Wiki:Imbuements/json (action=raw)
+Ordem de carregamento:
+1) Cache local (salvo no storage do app)  -> mais rápido/offline
+2) Seed embutido no APK                  -> funciona mesmo no 1º uso sem internet
+3) (Opcional) Internet (se allow_net=True)
 
-Melhoria (offline-first):
-- salva o JSON em cache persistente (app_storage_path) após baixar
-- se a rede falhar, usa o cache salvo para evitar que a aba quebre
+Este módulo expõe:
+- ImbuementEntry
+- fetch_imbuements_table()
+- fetch_imbuement_details(key_or_name)
 """
+
+from __future__ import annotations
 
 import json
 import os
-import re
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-# Endpoints (tenta com e sem www)
-_IMBUEMENTS_JSON_URLS = [
-    "https://www.tibiawiki.com.br/index.php?title=Tibia_Wiki:Imbuements/json&action=raw",
-    "https://tibiawiki.com.br/index.php?title=Tibia_Wiki:Imbuements/json&action=raw",
-]
+# URLs (só usados se allow_net=True)
+_URL_RAW = "https://tibiawiki.com.br/index.php?title=Tibia_Wiki:Imbuements/json&action=raw"
+_URL_HTML = "https://www.tibiawiki.com.br/wiki/Tibia_Wiki:Imbuements/json"
 
 _HEADERS = {
     "User-Agent": (
@@ -36,341 +37,266 @@ _HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
 }
 
-# Cache simples em memória (evita baixar 2x na mesma sessão)
-_CACHE_DATA = None  # type: Optional[Dict[str, Any]]
-
-# Cache persistente (arquivo)
-_CACHE_FILENAME = "imbuements_cache.json"
-# TTL longo para reduzir chance de erro de rede. Se quiser, pode baixar de novo após esse tempo.
-_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 dias
-
-
-# Import local (com fallback) para não quebrar em ambientes diferentes
-try:
-    from .storage import get_data_dir, safe_read_json, safe_write_json
-except Exception:
-    def get_data_dir():
-        return os.path.join(os.path.dirname(__file__), "..", "data")
-
-    def safe_read_json(path, default=None):
-        try:
-            if not os.path.exists(path):
-                return default
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return default
-
-    def safe_write_json(path, data):
-        try:
-            d = os.path.dirname(path)
-            if d:
-                os.makedirs(d, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+# Cache em memória (evita I/O repetido)
+_MEM_CACHE: Optional[Dict[str, Any]] = None
 
 
 class ImbuementEntry(object):
-    def __init__(self, name, page="", basic="", intricate="", powerful=""):
+    def __init__(self, name: str, page: str = "", basic: str = "", intricate: str = "", powerful: str = ""):
         self.name = name
-        self.page = page
+        self.page = page  # chave do JSON (ex.: Vampirism, Void, Strike...)
         self.basic = basic
         self.intricate = intricate
         self.powerful = powerful
 
 
-def _extract_json(payload_text):
-    t = (payload_text or "").strip()
-    t = t.lstrip("﻿")  # remove BOM
-
-    # Caso venha JSON puro
-    if t.startswith("{") and t.endswith("}"):
-        return json.loads(t)
-
-    # Caso venha HTML com JSON dentro de <pre> ... </pre>
-    m = re.search(r"<pre[^>]*>(.*?)</pre>", t, flags=re.I | re.S)
-    if m:
-        inner = m.group(1).strip().lstrip("﻿")
-        return json.loads(inner)
-
-    # Último recurso: tenta pegar o maior bloco {...}
-    m = re.search(r"(\{.*\})\s*$", t, flags=re.S)
-    if m:
-        return json.loads(m.group(1))
-
-    raise ValueError("Resposta não contém JSON válido.")
+def _seed_path() -> str:
+    return os.path.join(os.path.dirname(__file__), "data", "imbuements_seed.json")
 
 
-def _normalize_key(s):
-    s = (s or "").strip()
-    s = s.replace(" ", " ")
-    s = re.sub(r"\s+", " ", s)
-    return s.lower()
-
-
-def _cache_path():
+def _cache_path() -> str:
+    # Reusa helper do projeto (Android: app_storage_path)
     try:
+        from core.storage import get_data_dir  # type: ignore
         base = get_data_dir()
     except Exception:
-        base = os.path.join(os.path.dirname(__file__), "..", "data")
-    return os.path.join(base, _CACHE_FILENAME)
+        base = os.path.join(os.path.expanduser("~"), ".tibia-tools")
+
+    try:
+        os.makedirs(base, exist_ok=True)
+    except Exception:
+        pass
+
+    return os.path.join(base, "imbuements_cache.json")
 
 
-def _read_persisted_cache():
-    """Retorna (data_dict, age_seconds) ou (None, None)."""
-    path = _cache_path()
-    blob = safe_read_json(path, default=None)
-
-    if not isinstance(blob, dict):
-        return None, None
-
-    # Formato novo (wrapper)
-    if isinstance(blob.get("data"), dict):
-        data = blob.get("data")
-        fetched_at = blob.get("fetched_at")
-        age = None
-        if fetched_at is not None:
-            try:
-                age = time.time() - float(fetched_at)
-            except Exception:
-                age = None
-        return data, age
-
-    # Formato antigo: era o dict direto
-    return blob, None
+def _safe_read_json_file(path: str) -> Optional[Dict[str, Any]]:
+    try:
+        if not path or (not os.path.exists(path)):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
 
 
-def _read_seed_cache():
-    """Opcional: um snapshot empacotado junto do app."""
-    seed_path = os.path.join(os.path.dirname(__file__), "data", "imbuements_seed.json")
-    blob = safe_read_json(seed_path, default=None)
-    if isinstance(blob, dict) and blob:
-        # pode estar no formato wrapper também
-        if isinstance(blob.get("data"), dict):
-            return blob.get("data")
-        return blob
-    return None
+def _safe_write_json_file(path: str, obj: Dict[str, Any]) -> None:
+    try:
+        folder = os.path.dirname(path)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
-def _write_persisted_cache(data):
-    if not isinstance(data, dict) or not data:
-        return
-    payload = {"fetched_at": time.time(), "data": data}
-    safe_write_json(_cache_path(), payload)
+def _normalize_payload_to_dict(payload: str) -> Dict[str, Any]:
+    t = (payload or "").strip()
+    t = t.lstrip("\ufeff")
+    if t.startswith("{"):
+        return json.loads(t)
+
+    # tenta extrair JSON dentro de <pre>...</pre>
+    try:
+        import re
+        m = re.search(r"<pre[^>]*>(.*?)</pre>", t, flags=re.I | re.S)
+        if m:
+            inner = m.group(1)
+            # desescapa alguns casos comuns
+            inner = inner.replace("&quot;", '"').replace("&amp;", "&").strip()
+            return json.loads(inner)
+    except Exception:
+        pass
+
+    raise ValueError("Payload não é JSON válido.")
 
 
-def _tier_payload(tier_obj):
-    """Normaliza um tier em um dict com (effect:str, items:list[str])."""
-    if not isinstance(tier_obj, dict):
-        return {"effect": "-", "items": []}
+def _download_latest() -> Dict[str, Any]:
+    """
+    Baixa os dados da TibiaWiki.
+    Tenta primeiro action=raw; se falhar (403/HTML), cai pro HTML e extrai o <pre>.
+    """
+    import requests  # import local
+    sess = requests.Session()
+    sess.headers.update(_HEADERS)
 
-    effect = (
-        tier_obj.get("effect")
-        or tier_obj.get("description")
-        or tier_obj.get("Efeito")
-        or tier_obj.get("Descrição")
-        or ""
-    )
-    effect = (effect or "").strip()
+    # 1) raw
+    try:
+        r = sess.get(_URL_RAW, timeout=25)
+        if r.status_code == 200:
+            obj = _normalize_payload_to_dict(r.text)
+            if isinstance(obj, dict) and obj:
+                return obj
+    except Exception:
+        pass
 
-    items = tier_obj.get("items")
-    if items is None:
-        items = tier_obj.get("itens")
-    if items is None:
-        items = tier_obj.get("Itens")
-    if items is None:
-        items = []
+    # 2) html
+    r2 = sess.get(_URL_HTML, timeout=25)
+    r2.raise_for_status()
+    # extrai <pre> com regex (evita depender de bs4 no Android)
+    import re
+    m = re.search(r"<pre[^>]*>(.*?)</pre>", r2.text, flags=re.I | re.S)
+    if not m:
+        raise ValueError("Não encontrei bloco <pre> com o JSON na página.")
+    inner = m.group(1)
+    inner = inner.replace("&quot;", '"').replace("&amp;", "&").strip()
+    obj = json.loads(inner)
+    if not isinstance(obj, dict) or not obj:
+        raise ValueError("JSON baixado não está no formato esperado.")
+    return obj
 
-    out_items = []  # type: List[str]
+
+def _load_imbuements_json(allow_net: bool = False) -> Tuple[bool, Any]:
+    """
+    Retorna (ok, data_or_error)
+    """
+    global _MEM_CACHE
+    if _MEM_CACHE is not None:
+        return True, _MEM_CACHE
+
+    # 1) cache local
+    cache = _safe_read_json_file(_cache_path())
+    if cache:
+        _MEM_CACHE = cache
+        return True, cache
+
+    # 2) seed embutido
+    seed = _safe_read_json_file(_seed_path())
+    if seed:
+        _MEM_CACHE = seed
+        # grava pro cache pra acelerar nas próximas
+        _safe_write_json_file(_cache_path(), seed)
+        return True, seed
+
+    # 3) internet (opcional)
+    if allow_net:
+        try:
+            latest = _download_latest()
+            _MEM_CACHE = latest
+            _safe_write_json_file(_cache_path(), latest)
+            return True, latest
+        except Exception as e:
+            return False, str(e)
+
+    return False, "Sem dados: seed não encontrado e cache vazio."
+
+
+def _format_items(items: Any) -> List[str]:
+    out: List[str] = []
     if isinstance(items, list):
         for it in items:
             if isinstance(it, dict):
                 nm = (it.get("name") or it.get("nome") or it.get("item") or "").strip()
                 qty = it.get("quantity") or it.get("quantidade") or it.get("qtd") or ""
-                qty = str(qty).strip()
-                if nm and qty and qty != "0":
-                    out_items.append("%sx %s" % (qty, nm))
+                qty_s = str(qty).strip() if qty is not None else ""
+                if nm and qty_s and qty_s != "0":
+                    out.append("%sx %s" % (qty_s, nm))
                 elif nm:
-                    out_items.append(nm)
+                    out.append(nm)
             elif isinstance(it, str):
                 s = it.strip()
                 if s:
-                    out_items.append(s)
-
-    return {"effect": effect or "-", "items": out_items}
-
-
-def _tier_text(tier_obj):
-    """Formato pronto (multilinha), útil para exibir em lista."""
-    t = _tier_payload(tier_obj)
-    effect = (t.get("effect") or "").strip()
-    items = t.get("items") or []
-    lines = []
-    if effect and effect != "-":
-        lines.append(effect)
-    for it in items:
-        lines.append("- %s" % it)
-    return "\n".join(lines).strip() or "-"
+                    out.append(s)
+    return out
 
 
-def _load_json():
-    """Retorna (ok, dict) ou (False, mensagem)."""
-    global _CACHE_DATA
-
-    if _CACHE_DATA is not None:
-        return True, _CACHE_DATA
-
-    # 1) tenta cache persistente primeiro (offline-first)
-    cached, age = _read_persisted_cache()
-    cached_ok = isinstance(cached, dict) and bool(cached)
-
-    if cached_ok:
-        _CACHE_DATA = cached
-        return True, cached
-    # 1.1) tenta snapshot empacotado (se existir)
-    seed = _read_seed_cache()
-    if not cached_ok and isinstance(seed, dict) and seed:
-        _CACHE_DATA = seed
-        return True, seed
-
-    # 2) tenta baixar (e salvar)
-    try:
-        import requests  # import local para não quebrar o app no boot
-    except Exception as e:
-        # se tinha cache velho, usa ele mesmo assim
-        if cached_ok:
-            _CACHE_DATA = cached
-            return True, cached
-        return False, "requests não disponível: %s" % e
-
-    last_err = None
-    sess = requests.Session()
-    sess.headers.update(_HEADERS)
-
-    # “aquecimento” (às vezes libera WAF/cookies)
-    try:
-        sess.get("https://www.tibiawiki.com.br/", timeout=10)
-    except Exception:
-        pass
-
-    for url in _IMBUEMENTS_JSON_URLS:
-        try:
-            r = sess.get(url, timeout=20)
-            if r.status_code == 403:
-                # tenta mais uma vez (cookies)
-                r = sess.get(url, timeout=20)
-
-            if r.status_code >= 400:
-                last_err = "%s Client Error: %s" % (r.status_code, url)
-                continue
-
-            data = _extract_json(r.text)
-            if not isinstance(data, dict) or not data:
-                last_err = "JSON inválido (não é objeto)."
-                continue
-
-            _CACHE_DATA = data
-            _write_persisted_cache(data)
-            return True, data
-        except Exception as e:
-            last_err = str(e)
-            continue
-
-    # 3) fallback final: cache velho (se existia)
-    if cached_ok:
-        _CACHE_DATA = cached
-        return True, cached
-
-    return False, (last_err or "Falha ao carregar JSON do TibiaWiki.")
-
-
-def fetch_imbuements_table():
+def fetch_imbuements_table(allow_net: bool = False):
     """
-    Retorna (ok, lista_de_ImbuementEntry) ou (False, mensagem).
+    Retorna (ok, List[ImbuementEntry] | erro_str)
+    Por padrão NÃO acessa a internet (evita 403 no Android).
     """
-    ok, data = _load_json()
+    ok, data = _load_imbuements_json(allow_net=allow_net)
     if not ok:
         return False, data
 
-    out = []  # type: List[ImbuementEntry]
-    for name, obj in data.items():
-        if not isinstance(obj, dict):
+    if not isinstance(data, dict):
+        return False, "Dados inválidos."
+
+    entries: List[ImbuementEntry] = []
+    for key, val in data.items():
+        if not isinstance(val, dict):
             continue
+        display = (val.get("name") or key or "").strip()
+        level = val.get("level") or {}
+        basic = ""
+        intr = ""
+        powr = ""
+        if isinstance(level, dict):
+            b = level.get("Basic") or level.get("basic") or {}
+            i = level.get("Intricate") or level.get("intricate") or {}
+            p = level.get("Powerful") or level.get("powerful") or {}
+            if isinstance(b, dict):
+                basic = (b.get("description") or b.get("desc") or "").strip()
+            if isinstance(i, dict):
+                intr = (i.get("description") or i.get("desc") or "").strip()
+            if isinstance(p, dict):
+                powr = (p.get("description") or p.get("desc") or "").strip()
 
-        level = obj.get("level")
-        if not isinstance(level, dict):
-            level = {}
+        entries.append(ImbuementEntry(display, page=str(key), basic=basic, intricate=intr, powerful=powr))
 
-        # alguns JSONs podem trazer um campo de página
-        page = (
-            obj.get("page")
-            or obj.get("title")
-            or obj.get("pagina")
-            or obj.get("Página")
-            or ""
-        )
-        page = str(page).strip()
-        if not page:
-            page = str(name)
-
-        basic = _tier_text(level.get("Basic") or level.get("basic") or {})
-        intricate = _tier_text(level.get("Intricate") or level.get("intricate") or {})
-        powerful = _tier_text(level.get("Powerful") or level.get("powerful") or {})
-
-        out.append(ImbuementEntry(str(name), page, basic, intricate, powerful))
-
-    out.sort(key=lambda e: (e.name or "").lower())
-    if not out:
-        return False, "Não foi possível extrair a lista de imbuements."
-    return True, out
+    entries.sort(key=lambda e: (e.name or "").lower())
+    return True, entries
 
 
-def fetch_imbuement_details(title_or_page):
+def fetch_imbuement_details(title_or_page: str, allow_net: bool = False):
     """
-    Devolve (ok, dict com basic/intricate/powerful) onde cada tier é:
-      {"effect": str, "items": [str, ...]}
-
-    Obs: o argumento pode ser o nome (chave) ou o título/página.
+    Retorna (ok, dict | erro_str)
+    Formato esperado pelo main.py:
+      {
+        "basic": {"effect": "...", "items": ["25x X", ...]},
+        "intricate": {...},
+        "powerful": {...}
+      }
     """
-    ok, data = _load_json()
+    ok, data = _load_imbuements_json(allow_net=allow_net)
     if not ok:
         return False, data
 
-    target = _normalize_key(title_or_page)
+    if not isinstance(data, dict):
+        return False, "Dados inválidos."
 
-    picked = None
-    # tenta achar por chave direta (case-insensitive)
-    for name, obj in data.items():
-        if _normalize_key(str(name)) == target:
-            picked = obj
-            break
+    key = (title_or_page or "").strip()
+    if not key:
+        return False, "Imbuement inválido."
 
-    # tenta achar pelo campo de página (se existir)
+    picked = None  # type: Optional[Dict[str, Any]]
+
+    # tenta por chave exata
+    if key in data and isinstance(data.get(key), dict):
+        picked = data.get(key)
+
+    # tenta por nome (case-insensitive)
     if picked is None:
-        for _name, obj in data.items():
-            if not isinstance(obj, dict):
-                continue
-            page = obj.get("page") or obj.get("title") or obj.get("pagina") or ""
-            if page and _normalize_key(str(page)) == target:
-                picked = obj
-                break
+        lk = key.lower()
+        for k, v in data.items():
+            if isinstance(v, dict):
+                nm = (v.get("name") or "").strip()
+                if nm and nm.lower() == lk:
+                    picked = v
+                    break
 
-    if not isinstance(picked, dict):
-        return False, "Imbuement não encontrado: %s" % title_or_page
+    if picked is None:
+        return False, "Não encontrei detalhes para: %s" % key
 
-    level = picked.get("level")
+    level = picked.get("level") or {}
     if not isinstance(level, dict):
-        level = {}
+        return False, "Formato inválido (level)."
+
+    def tier_obj(level_key: str) -> Dict[str, Any]:
+        t = level.get(level_key) or level.get(level_key.lower()) or {}
+        if not isinstance(t, dict):
+            t = {}
+        effect = (t.get("description") or t.get("desc") or "").strip()
+        items = _format_items(t.get("itens") or t.get("items") or t.get("itens ") or [])
+        return {"effect": effect, "items": items}
 
     details = {
-        "basic": _tier_payload(level.get("Basic") or level.get("basic") or {}),
-        "intricate": _tier_payload(level.get("Intricate") or level.get("intricate") or {}),
-        "powerful": _tier_payload(level.get("Powerful") or level.get("powerful") or {}),
+        "basic": tier_obj("Basic"),
+        "intricate": tier_obj("Intricate"),
+        "powerful": tier_obj("Powerful"),
     }
     return True, details
