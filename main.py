@@ -647,7 +647,7 @@ class TibiaToolsApp(MDApp):
 
                 ok, data = fetch_imbuement_details(page)
                 if not ok:
-                    msg = f"Erro ao carregar detalhes:\\n{data}"
+                    msg = f"Erro ao carregar detalhes:\n{data}"
                     Clock.schedule_once(lambda *_: setattr(dlg, "text", msg), 0)
                     return
 
@@ -655,26 +655,32 @@ class TibiaToolsApp(MDApp):
 
                 def fmt(tkey: str, label: str) -> str:
                     tier = tiers.get(tkey, {}) if isinstance(tiers, dict) else {}
-                    effect = str(tier.get("effect", "")).strip()
+
+                    def clean(s: str) -> str:
+                        # Converte sequências literais (ex.: "\\n") em quebras de linha reais
+                        return (s or "").replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").strip()
+
+                    effect = clean(str(tier.get("effect", "")))
                     items = tier.get("items", []) or []
-                    out_lines = []
+
+                    out_lines = [f"{label}:"]
                     if effect:
                         out_lines.append(f"Efeito: {effect}")
                     if items:
                         out_lines.append("Itens:")
                         for it in items[:50]:
-                            out_lines.append(f"- {it}")
+                            out_lines.append(f"• {clean(str(it))}")
                     else:
                         out_lines.append("Itens: (não encontrado)")
-                    return f"{label}:\\n" + "\\n".join(out_lines)
+                    return "\n".join(out_lines)
 
                 text = (
                     fmt("basic", "Basic")
-                    + "\\n\\n"
+                    + "\n\n"
                     + fmt("intricate", "Intricate")
-                    + "\\n\\n"
+                    + "\n\n"
                     + fmt("powerful", "Powerful")
-                    + "\\n\\n(Fonte: TibiaWiki BR)"
+                    + "\n\n(Fonte: TibiaWiki BR)"
                 )
                 Clock.schedule_once(lambda *_: setattr(dlg, "text", text), 0)
             except Exception as e:
