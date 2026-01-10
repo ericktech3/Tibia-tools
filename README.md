@@ -145,7 +145,6 @@ android.presplash_color = #000000
 
 ## 👤 Créditos
 - **Erick Bandeira (Monk Curandeiro)** — idealização, especificação, testes e manutenção do projeto para uso na guild.
-- **ChatGPT (OpenAI)** — apoio nas implementações, refactors e automações (GitHub Actions/Buildozer).
 
 ## 📌 Fontes de dados
 - TibiaData API (personagem/boosted)
