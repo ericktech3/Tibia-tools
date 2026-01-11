@@ -83,12 +83,19 @@ def is_character_online_tibiadata(name: str, world: str, timeout: int = 12) -> O
     try:
         safe_world = requests.utils.quote(world)
         data = _get_json(WORLD_URL.format(world=safe_world), timeout)
-        players = (
-            data.get("world", {})
-            .get("world", {})
-            .get("online_players", [])
-            or []
-        )
+        # v4: {"world": {"name": ..., "online_players": [...]}, "information": {...}}
+        # Alguns wrappers antigos (ou cópias) podem vir como {"world": {"world": {...}}}
+        world_obj = data.get("world", {})
+        if isinstance(world_obj, dict) and isinstance(world_obj.get("world"), dict):
+            world_obj = world_obj.get("world")  # type: ignore[assignment]
+
+        players = []
+        if isinstance(world_obj, dict):
+            players = world_obj.get("online_players", []) or []
+
+        if not isinstance(players, list):
+            players = []
+
         target = (name or "").strip().lower()
         for p in players:
             if isinstance(p, dict) and (p.get("name") or "").strip().lower() == target:
