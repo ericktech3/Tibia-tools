@@ -414,13 +414,18 @@ class TibiaToolsApp(MDApp):
                 if (online_td is None or online_td is False) and world and str(world).strip().upper() != "N/A":
                     online_web = is_character_online_tibia_com(name, world)
 
+                # Regra anti-falso-negative:
+                # - ONLINE se qualquer fonte confirmar
+                # - OFFLINE apenas se TODAS as fontes consultadas confirmarem
+                # - senão, usamos o status bruto da TibiaData (pode ser "offline" quando está atrasado)
                 if online_td is True or online_web is True:
                     status = "online"
-                elif (online_td is False or online_web is False) and status_raw != "online":
-                    # Só forçamos OFFLINE se o status_raw não estiver dizendo online.
+                elif online_td is False and online_web is False:
                     status = "offline"
+                elif status_raw:
+                    status = status_raw
                 else:
-                    status = status_raw or "N/A"
+                    status = "N/A"
 
                 guild = character.get("guild") or {}
                 guild_name = ""
