@@ -39,6 +39,7 @@ try:
         is_character_online_tibia_com,
         fetch_guildstats_deaths_xp,
     )
+    from core.exp_loss import estimate_death_exp_lost
     from core.storage import get_data_dir, safe_read_json, safe_write_json
     from core.bosses import fetch_exevopan_bosses
     from core.boosted import fetch_boosted
@@ -466,17 +467,36 @@ class TibiaToolsApp(MDApp):
                 if not isinstance(deaths, list):
                     deaths = []
 
-                # Complemento: XP lost por morte (fansite). Match por ordem (mais recente -> mais recente).
+                # XP lost por morte:
+                # 1) tenta GuildStats (fansite) por ordem (mais recente -> mais recente)
+                # 2) se falhar/bloquear, calcula a estimativa offline (igual GuildStats: promoted + 7 blessings)
+                xp_list = []
                 try:
                     xp_list = fetch_guildstats_deaths_xp(title or name)
                 except Exception:
                     xp_list = []
+
                 if xp_list:
                     for i, d in enumerate(deaths):
                         if i >= len(xp_list):
                             break
-                        if isinstance(d, dict) and "exp_lost" not in d:
+                        if isinstance(d, dict) and not d.get("exp_lost"):
                             d["exp_lost"] = xp_list[i]
+
+                # Fallback robusto: estimativa local (não depende de scraping)
+                for d in deaths:
+                    if not isinstance(d, dict):
+                        continue
+                    if d.get("exp_lost"):
+                        continue
+                    lvl = d.get("level")
+                    try:
+                        lvl_int = int(lvl)
+                    except Exception:
+                        continue
+                    exp_lost = estimate_death_exp_lost(lvl_int, blessings=7, promoted=True, retro_hardcore=False)
+                    if exp_lost:
+                        d["exp_lost"] = f"-{exp_lost:,}"
 
                 payload = {
                     "title": title,

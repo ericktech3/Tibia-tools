@@ -28,7 +28,8 @@ WORLD_URL = "https://api.tibiadata.com/v4/world/{world}"
 GUILDSTATS_DEATHS_URL = "https://guildstats.eu/character?nick={name}&tab=5"
 
 # Tibia.com (oficial) – fallback extra para detectar ONLINE
-TIBIA_WORLD_URL = "https://www.tibia.com/community/?subtopic=worlds&world={world}"
+# Preferimos a página do personagem (não é paginada como a lista do world).
+TIBIA_CHAR_URL = "https://www.tibia.com/community/?subtopic=characters&name={name}"
 
 # Alguns sites (principalmente fansites) podem bloquear user-agent genérico.
 # Usamos um UA de navegador comum para reduzir falsos negativos.
@@ -167,32 +168,36 @@ def is_character_online_tibiadata(name: str, world: str, timeout: int = 12) -> O
 def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> Optional[bool]:
     """Fallback extra usando o site oficial (tibia.com) para checar se o char está online.
 
-    Isso costuma ser mais confiável quando a TibiaData está atrasada/indisponível.
+    Importante: NÃO usamos a página do world porque é paginada (pode dar falso OFFLINE).
 
     Retorna:
     - True/False se conseguimos checar
     - None se houve erro/parsing falhou
     """
+    _ = world  # mantemos o parâmetro por compatibilidade
     try:
-        safe_world = requests.utils.quote(str(world))
-        url = TIBIA_WORLD_URL.format(world=safe_world)
+        safe_name = requests.utils.quote_plus(str(name))
+        url = TIBIA_CHAR_URL.format(name=safe_name)
         r = requests.get(url, timeout=timeout, headers=UA)
         r.raise_for_status()
 
         soup = BeautifulSoup(r.text, "html.parser")
-        target = (name or "").strip().lower()
-        if not target:
+        # A página do char tem uma tabela com linhas "Label" / "Value".
+        for tr in soup.find_all("tr"):
+            tds = tr.find_all("td")
+            if len(tds) < 2:
+                continue
+            k = (tds[0].get_text(" ", strip=True) or "").strip().rstrip(":").strip().lower()
+            if k != "status":
+                continue
+            v = (tds[1].get_text(" ", strip=True) or "").strip().lower()
+            if "online" in v:
+                return True
+            if "offline" in v:
+                return False
             return None
 
-        # No site oficial, a lista de online tem links para o character.
-        for a in soup.find_all("a", href=True):
-            href = a.get("href") or ""
-            if "subtopic=characters" not in href:
-                continue
-            txt = a.get_text(" ", strip=True).strip().lower()
-            if txt == target:
-                return True
-        return False
+        return None
     except Exception:
         return None
 
