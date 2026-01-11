@@ -26,7 +26,7 @@ from kivy.uix.screenmanager import ScreenManager
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
-from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
+from kivymd.uix.list import OneLineIconListItem, TwoLineIconListItem, IconLeftWidget
 from kivymd.uix.menu import MDDropdownMenu
 
 # ---- IMPORTS DO CORE (com proteção para não “fechar sozinho” no Android) ----
@@ -156,6 +156,130 @@ class TibiaToolsApp(MDApp):
 
         print(f"[TOAST] {message}")
 
+    def _char_set_loading(self, home, name: str):
+        if not hasattr(home, "ids"):
+            return
+
+        # Layout novo (cards + listas)
+        if "char_title" in home.ids and "char_details_list" in home.ids and "char_deaths_list" in home.ids:
+            home.ids.char_title.text = name
+            home.ids.char_badge.text = ""
+            home.ids.char_details_list.clear_widgets()
+
+            item = OneLineIconListItem(text="Buscando informações...")
+            item.add_widget(IconLeftWidget(icon="cloud-search"))
+            home.ids.char_details_list.add_widget(item)
+
+            home.ids.char_deaths_list.clear_widgets()
+            ditem = OneLineIconListItem(text="Aguardando...")
+            ditem.add_widget(IconLeftWidget(icon="skull-outline"))
+            home.ids.char_deaths_list.add_widget(ditem)
+            return
+
+        # Fallback antigo
+        if "char_status" in home.ids:
+            home.ids.char_status.text = "Buscando..."
+
+    def _char_show_error(self, home, message: str):
+        if not hasattr(home, "ids"):
+            return
+
+        if "char_title" in home.ids and "char_details_list" in home.ids and "char_deaths_list" in home.ids:
+            home.ids.char_title.text = "Erro"
+            home.ids.char_badge.text = ""
+            home.ids.char_details_list.clear_widgets()
+
+            item = OneLineIconListItem(text=message)
+            item.add_widget(IconLeftWidget(icon="alert-circle-outline"))
+            home.ids.char_details_list.add_widget(item)
+
+            home.ids.char_deaths_list.clear_widgets()
+            ditem = OneLineIconListItem(text="—")
+            ditem.add_widget(IconLeftWidget(icon="skull-outline"))
+            home.ids.char_deaths_list.add_widget(ditem)
+            return
+
+        if "char_status" in home.ids:
+            home.ids.char_status.text = message
+
+    def _char_show_result(self, home, payload: dict):
+        status = str(payload.get("status", "N/A"))
+        title = str(payload.get("title", ""))
+        voc = str(payload.get("voc", "N/A"))
+        level = str(payload.get("level", "N/A"))
+        world = str(payload.get("world", "N/A"))
+        guild_line = str(payload.get("guild_line", "Guild: N/A"))
+        house_line = str(payload.get("house_line", "Houses: N/A"))
+        deaths = payload.get("deaths", [])
+
+        st = status.strip().lower()
+        if st == "online":
+            badge = "[b][color=#2ecc71]ONLINE[/color][/b]"
+            status_icon = "wifi"
+        elif st == "offline":
+            badge = "[b][color=#e74c3c]OFFLINE[/color][/b]"
+            status_icon = "wifi-off"
+        else:
+            badge = "[b][color=#bdc3c7]N/A[/color][/b]"
+            status_icon = "help-circle-outline"
+
+        # Layout novo (cards + listas)
+        if hasattr(home, "ids") and "char_title" in home.ids and "char_details_list" in home.ids and "char_deaths_list" in home.ids:
+            home.ids.char_title.text = title or "Resultado"
+            home.ids.char_badge.text = badge
+
+            dl = home.ids.char_details_list
+            dl.clear_widgets()
+
+            def add(text: str, icon: str):
+                item = OneLineIconListItem(text=text)
+                item.add_widget(IconLeftWidget(icon=icon))
+                dl.add_widget(item)
+
+            add(f"Status: {status}", status_icon)
+            add(f"Vocation: {voc}", "account")
+            add(f"Level: {level}", "signal")
+            add(f"World: {world}", "earth")
+            add(guild_line, "account-group")
+            add(house_line, "home")
+
+            dlist = home.ids.char_deaths_list
+            dlist.clear_widgets()
+
+            deaths_list = [d for d in deaths if isinstance(d, dict)] if isinstance(deaths, list) else []
+            for d in deaths_list[:6]:
+                time_s = str(d.get("time") or d.get("date") or "").strip()
+                lvl_s = str(d.get("level") or "").strip()
+                reason_s = str(d.get("reason") or d.get("description") or "").strip()
+                if not reason_s:
+                    continue
+
+                meta = time_s
+                if lvl_s:
+                    meta = (meta + f" • lvl {lvl_s}").strip(" •")
+
+                it = TwoLineIconListItem(text=reason_s, secondary_text=meta or " ")
+                it.add_widget(IconLeftWidget(icon="skull"))
+                dlist.add_widget(it)
+
+            if len(dlist.children) == 0:
+                ditem = OneLineIconListItem(text="Sem mortes recentes (ou sem dados).")
+                ditem.add_widget(IconLeftWidget(icon="skull-outline"))
+                dlist.add_widget(ditem)
+            return
+
+        # Fallback antigo (se ainda existir)
+        if "char_status" in home.ids:
+            home.ids.char_status.text = (
+                f"Status: {status}\n"
+                f"Vocation: {voc}\n"
+                f"Level: {level}\n"
+                f"World: {world}\n"
+                f"{guild_line}\n"
+                f"{house_line}"
+            )
+
+
     # --------------------
     # Char tab
     # --------------------
@@ -166,7 +290,7 @@ class TibiaToolsApp(MDApp):
             self.toast("Digite o nome do char.")
             return
 
-        home.ids.char_status.text = "Buscando..."
+        self._char_set_loading(home, name)
         home.char_last_url = ""
 
         def worker():
@@ -177,6 +301,8 @@ class TibiaToolsApp(MDApp):
                 character_wrapper = data.get("character", {})
                 character = character_wrapper.get("character", character_wrapper) if isinstance(character_wrapper, dict) else {}
                 url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
+                title = str(character.get("name") or name)
+
                 voc = character.get("vocation", "N/A")
                 level = character.get("level", "N/A")
                 world = character.get("world", "N/A")
@@ -222,42 +348,32 @@ class TibiaToolsApp(MDApp):
                     house_line = "Houses: N/A"
 
                 deaths = (character.get('deaths') or character_wrapper.get('deaths') or data.get('deaths') or [])
-                deaths_text = ""
-                if isinstance(deaths, list) and deaths:
-                    rows = []
-                    for d in deaths[:5]:
-                        if not isinstance(d, dict):
-                            continue
-                        time_s = str(d.get("time") or d.get("date") or "").strip()
-                        lvl_s = str(d.get("level") or "").strip()
-                        reason_s = str(d.get("reason") or d.get("description") or "").strip()
-                        if reason_s:
-                            if lvl_s:
-                                rows.append(f"- {time_s} (lvl {lvl_s}): {reason_s}".strip())
-                            else:
-                                rows.append(f"- {time_s}: {reason_s}".strip())
-                    if rows:
-                        deaths_text = "\nÚltimas mortes:\n" + "\n".join(rows)
+                if not isinstance(deaths, list):
+                    deaths = []
 
-                result = (
-                    f"Status: {status}\n"
-                    f"Vocation: {voc}\n"
-                    f"Level: {level}\n"
-                    f"World: {world}\n"
-                    f"{guild_line}\n"
-                    f"{house_line}"
-                    f"{deaths_text}"
-                )
-                return True, result, url
+                payload = {
+                    "title": title,
+                    "status": status,
+                    "voc": voc,
+                    "level": level,
+                    "world": world,
+                    "guild_line": guild_line,
+                    "house_line": house_line,
+                    "deaths": deaths,
+                }
+                return True, payload, url
             except Exception as e:
                 return False, f"Erro: {e}", ""
 
         def done(res):
-            ok, text, url = res
-            home.ids.char_status.text = text
+            ok, payload_or_msg, url = res
             home.char_last_url = url
+
             if ok:
+                self._char_show_result(home, payload_or_msg)
                 self.toast("Char encontrado.")
+            else:
+                self._char_show_error(home, str(payload_or_msg))
 
         def run():
             res = worker()
