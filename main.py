@@ -156,6 +156,56 @@ class TibiaToolsApp(MDApp):
 
         print(f"[TOAST] {message}")
 
+    def _show_text_dialog(self, title: str, text: str):
+        """Abre um dialog simples para mostrar textos longos (sem cortar com '...')."""
+        try:
+            if getattr(self, "_active_dialog", None):
+                self._active_dialog.dismiss()
+        except Exception:
+            pass
+
+        dialog = MDDialog(
+            title=title,
+            text=text,
+            buttons=[
+                MDFlatButton(text="OK", on_release=lambda *_: dialog.dismiss()),
+            ],
+        )
+        self._active_dialog = dialog
+        dialog.open()
+
+    def _shorten_death_reason(self, reason: str) -> str:
+        """Deixa o texto da morte mais legível no card (o completo pode abrir no dialog)."""
+        r = (reason or "").strip()
+        if not r:
+            return ""
+
+        # Tenta reduzir listas enormes de killers: "... by A, B, C and D"
+        low = r.lower()
+        if " by " in low:
+            idx = low.find(" by ")
+            prefix = r[:idx].strip().rstrip(".")
+            killers = r[idx + 4 :].strip().rstrip(".")
+
+            # normaliza separadores
+            killers_norm = killers.replace(" and ", ", ")
+            parts = [p.strip() for p in killers_norm.split(",") if p.strip()]
+            if parts:
+                first = parts[0]
+                extra = len(parts) - 1
+
+                # compacta "Slain/Died at Level X" -> "Slain"/"Died"
+                event = prefix
+                if prefix.lower().startswith("slain"):
+                    event = "Slain"
+                elif prefix.lower().startswith("died"):
+                    event = "Died"
+
+                return f"{event} by {first}" + (f" +{extra}" if extra > 0 else "")
+
+        # fallback: corta com bom senso (sem '...')
+        return r[:80] + ("" if len(r) <= 80 else "…")
+
     def _char_set_loading(self, home, name: str):
         if not hasattr(home, "ids"):
             return
@@ -210,6 +260,8 @@ class TibiaToolsApp(MDApp):
         world = str(payload.get("world", "N/A"))
         guild_line = str(payload.get("guild_line", "Guild: N/A"))
         house_line = str(payload.get("house_line", "Houses: N/A"))
+        guild = payload.get("guild") or {}
+        houses = payload.get("houses") or []
         deaths = payload.get("deaths", [])
 
         st = status.strip().lower()
@@ -231,17 +283,46 @@ class TibiaToolsApp(MDApp):
             dl = home.ids.char_details_list
             dl.clear_widgets()
 
-            def add(text: str, icon: str):
+            def add_one(text: str, icon: str, dialog_title: str = "", dialog_text: str = ""):
                 item = OneLineIconListItem(text=text)
                 item.add_widget(IconLeftWidget(icon=icon))
+                if dialog_text:
+                    item.bind(on_release=lambda *_: self._show_text_dialog(dialog_title or "Detalhes", dialog_text))
                 dl.add_widget(item)
 
-            add(f"Status: {status}", status_icon)
-            add(f"Vocation: {voc}", "account")
-            add(f"Level: {level}", "signal")
-            add(f"World: {world}", "earth")
-            add(guild_line, "account-group")
-            add(house_line, "home")
+            def add_two(text: str, secondary: str, icon: str, dialog_title: str = "", dialog_text: str = ""):
+                item = TwoLineIconListItem(text=text, secondary_text=secondary or " ")
+                item.add_widget(IconLeftWidget(icon=icon))
+                if dialog_text:
+                    item.bind(on_release=lambda *_: self._show_text_dialog(dialog_title or "Detalhes", dialog_text))
+                dl.add_widget(item)
+
+            add_one(f"Status: {status}", status_icon)
+            add_one(f"Vocation: {voc}", "account")
+            add_one(f"Level: {level}", "signal")
+            add_one(f"World: {world}", "earth")
+
+            # Guild (evita cortar demais; toque para ver completo)
+            gname = str(guild.get("name") or "").strip() if isinstance(guild, dict) else ""
+            grank = str(guild.get("rank") or "").strip() if isinstance(guild, dict) else ""
+            if gname:
+                full = f"{gname}{(' (' + grank + ')') if grank else ''}".strip()
+                if grank:
+                    add_two(f"Guild: {gname}", grank, "account-group", "Guild", full)
+                else:
+                    add_one(f"Guild: {gname}", "account-group", "Guild", full)
+            else:
+                add_one(guild_line, "account-group")
+
+            # Houses (se for mais de 1, mostra quantidade e abre dialog com a lista)
+            houses_list = [str(x).strip() for x in houses if str(x).strip()] if isinstance(houses, list) else []
+            if not houses_list:
+                add_one("Houses: Nenhuma", "home")
+            elif len(houses_list) == 1:
+                add_one(f"Houses: {houses_list[0]}", "home", "Houses", houses_list[0])
+            else:
+                full_h = "\n".join(houses_list)
+                add_two("Houses", f"{len(houses_list)} casas", "home", "Houses", full_h)
 
             dlist = home.ids.char_deaths_list
             dlist.clear_widgets()
@@ -258,8 +339,10 @@ class TibiaToolsApp(MDApp):
                 if lvl_s:
                     meta = (meta + f" • lvl {lvl_s}").strip(" •")
 
-                it = TwoLineIconListItem(text=reason_s, secondary_text=meta or " ")
+                short_reason = self._shorten_death_reason(reason_s)
+                it = TwoLineIconListItem(text=short_reason or reason_s, secondary_text=meta or " ")
                 it.add_widget(IconLeftWidget(icon="skull"))
+                it.bind(on_release=lambda *_ , rr=reason_s, mm=meta: self._show_text_dialog("Morte", f"{rr}\n\n{mm}".strip()))
                 dlist.add_widget(it)
 
             if len(dlist.children) == 0:
@@ -307,45 +390,56 @@ class TibiaToolsApp(MDApp):
                 level = character.get("level", "N/A")
                 world = character.get("world", "N/A")
 
-                status = character.get("status") or ""
-                if not status or str(status).strip().upper() == "N/A":
-                    online = is_character_online_tibiadata(name, world) if world and world != 'N/A' else None
-                    if online is True:
-                        status = "online"
-                    elif online is False:
-                        status = "offline"
-                    else:
-                        status = "N/A"
+                # Status: a API /v4/character pode ficar alguns segundos "atrasada".
+                # Para evitar falso OFFLINE, conferimos a lista de online do world e priorizamos ela.
+                status_raw = str(character.get("status") or "").strip().lower()
+                online_check = (
+                    is_character_online_tibiadata(name, world)
+                    if world and str(world).strip().upper() != "N/A"
+                    else None
+                )
+
+                if online_check is True:
+                    status = "online"
+                elif online_check is False:
+                    status = "offline"
+                else:
+                    status = status_raw or "N/A"
 
                 guild = character.get("guild") or {}
+                guild_name = ""
+                guild_rank = ""
                 if isinstance(guild, dict) and guild.get("name"):
-                    gname = str(guild.get("name") or "").strip()
-                    grank = str(guild.get("rank") or guild.get("title") or "").strip()
-                    guild_line = f"Guild: {gname}{(' (' + grank + ')') if grank else ''}"
-                else:
-                    guild_line = "Guild: N/A"
+                    guild_name = str(guild.get("name") or "").strip()
+                    guild_rank = str(guild.get("rank") or guild.get("title") or "").strip()
+
+                guild_line = (
+                    f"Guild: {guild_name}{(' (' + guild_rank + ')') if guild_rank else ''}"
+                    if guild_name
+                    else "Guild: N/A"
+                )
 
                 houses = character.get("houses") or []
+                houses_list = []
                 if isinstance(houses, list):
-                    if not houses:
-                        house_line = "Houses: Nenhuma"
+                    for h in houses:
+                        if isinstance(h, dict):
+                            hn = str(h.get("name") or h.get("house") or "").strip()
+                            ht = str(h.get("town") or "").strip()
+                            if hn and ht:
+                                houses_list.append(f"{hn} ({ht})")
+                            elif hn:
+                                houses_list.append(hn)
+                        elif isinstance(h, str) and h.strip():
+                            houses_list.append(h.strip())
+
+                if houses_list:
+                    if len(houses_list) == 1:
+                        house_line = f"Houses: {houses_list[0]}"
                     else:
-                        parts = []
-                        for h in houses[:3]:
-                            if isinstance(h, dict):
-                                hn = str(h.get("name") or h.get("house") or "").strip()
-                                ht = str(h.get("town") or "").strip()
-                                if hn and ht:
-                                    parts.append(f"{hn} ({ht})")
-                                elif hn:
-                                    parts.append(hn)
-                            elif isinstance(h, str):
-                                parts.append(h.strip())
-                        parts = [p for p in parts if p]
-                        more = f" (+{len(houses) - len(parts)}...)" if len(houses) > len(parts) and parts else ""
-                        house_line = "Houses: " + (", ".join(parts) + more if parts else f"{len(houses)}")
+                        house_line = f"Houses: {len(houses_list)} (toque para ver)"
                 else:
-                    house_line = "Houses: N/A"
+                    house_line = "Houses: Nenhuma"
 
                 deaths = (character.get('deaths') or character_wrapper.get('deaths') or data.get('deaths') or [])
                 if not isinstance(deaths, list):
@@ -357,6 +451,9 @@ class TibiaToolsApp(MDApp):
                     "voc": voc,
                     "level": level,
                     "world": world,
+                    "guild": {"name": guild_name, "rank": guild_rank} if guild_name else None,
+                    "houses": houses_list,
+                    # Mantemos as strings por compat (fallback antigo / outros pontos)
                     "guild_line": guild_line,
                     "house_line": house_line,
                     "deaths": deaths,
