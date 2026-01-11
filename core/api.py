@@ -13,13 +13,22 @@ Também expomos:
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+import re
+
 import requests
+from bs4 import BeautifulSoup
 
 
 # TibiaData v4
 WORLDS_URL = "https://api.tibiadata.com/v4/worlds"
 CHAR_URL = "https://api.tibiadata.com/v4/character/{name}"
 WORLD_URL = "https://api.tibiadata.com/v4/world/{world}"
+
+# GuildStats (fansite) – usado apenas para complementar informações (ex: xp lost em mortes)
+GUILDSTATS_DEATHS_URL = "https://guildstats.eu/character?nick={name}&tab=5"
+
+# Tibia.com (oficial) – fallback extra para detectar ONLINE
+TIBIA_WORLD_URL = "https://www.tibia.com/community/?subtopic=worlds&world={world}"
 
 UA = {"User-Agent": "TibiaToolsAndroid/1.0 (+kivy)"}
 
@@ -80,29 +89,136 @@ def is_character_online_tibiadata(name: str, world: str, timeout: int = 12) -> O
 
     Se houver erro (world inválido / indisponível), retorna None.
     """
+    def _looks_like_player_list(v: Any) -> bool:
+        if not isinstance(v, list) or not v:
+            return False
+        # heurística: lista de dicts com pelo menos 'name'
+        ok = 0
+        for it in v[:25]:
+            if isinstance(it, dict) and isinstance(it.get("name"), str):
+                ok += 1
+        return ok >= max(1, min(3, len(v)))
+
+    def _find_best_player_list(obj: Any, depth: int = 0) -> Optional[List[Dict[str, Any]]]:
+        if depth > 6:
+            return None
+
+        best: Optional[List[Dict[str, Any]]] = None
+
+        if isinstance(obj, dict):
+            for v in obj.values():
+                if _looks_like_player_list(v):
+                    cand = [x for x in v if isinstance(x, dict)]
+                    if best is None or len(cand) > len(best):
+                        best = cand
+                else:
+                    nested = _find_best_player_list(v, depth + 1)
+                    if nested and (best is None or len(nested) > len(best)):
+                        best = nested
+
+        elif isinstance(obj, list):
+            for v in obj:
+                nested = _find_best_player_list(v, depth + 1)
+                if nested and (best is None or len(nested) > len(best)):
+                    best = nested
+
+        return best
+
     try:
-        safe_world = requests.utils.quote(world)
+        safe_world = requests.utils.quote(str(world))
         data = _get_json(WORLD_URL.format(world=safe_world), timeout)
-        # v4: {"world": {"name": ..., "online_players": [...]}, "information": {...}}
+
+        # v4 típico: {"world": {"name": ..., "online_players": [...]}, "information": {...}}
         # Alguns wrappers antigos (ou cópias) podem vir como {"world": {"world": {...}}}
-        world_obj = data.get("world", {})
+        world_obj: Any = data.get("world", {})
         if isinstance(world_obj, dict) and isinstance(world_obj.get("world"), dict):
-            world_obj = world_obj.get("world")  # type: ignore[assignment]
+            world_obj = world_obj.get("world")
 
-        players = []
-        if isinstance(world_obj, dict):
-            players = world_obj.get("online_players", []) or []
+        players = None
+        if isinstance(world_obj, dict) and isinstance(world_obj.get("online_players"), list):
+            players = [x for x in (world_obj.get("online_players") or []) if isinstance(x, dict)]
+        else:
+            # fallback: procura recursivamente uma lista "parecida" com online players
+            players = _find_best_player_list(world_obj)
 
-        if not isinstance(players, list):
-            players = []
+        # Se não conseguimos achar a lista, devolvemos None (desconhecido) — para não forçar OFFLINE errado.
+        if not players:
+            return None
 
         target = (name or "").strip().lower()
         for p in players:
-            if isinstance(p, dict) and (p.get("name") or "").strip().lower() == target:
+            if (p.get("name") or "").strip().lower() == target:
                 return True
         return False
     except Exception:
         return None
+
+
+def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> Optional[bool]:
+    """Fallback extra usando o site oficial (tibia.com) para checar se o char está online.
+
+    Isso costuma ser mais confiável quando a TibiaData está atrasada/indisponível.
+
+    Retorna:
+    - True/False se conseguimos checar
+    - None se houve erro/parsing falhou
+    """
+    try:
+        safe_world = requests.utils.quote(str(world))
+        url = TIBIA_WORLD_URL.format(world=safe_world)
+        r = requests.get(url, timeout=timeout, headers=UA)
+        r.raise_for_status()
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        target = (name or "").strip().lower()
+        if not target:
+            return None
+
+        # No site oficial, a lista de online tem links para o character.
+        for a in soup.find_all("a", href=True):
+            href = a.get("href") or ""
+            if "subtopic=characters" not in href:
+                continue
+            txt = a.get_text(" ", strip=True).strip().lower()
+            if txt == target:
+                return True
+        return False
+    except Exception:
+        return None
+
+
+def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
+    """Retorna a lista de 'Exp lost' (strings) do GuildStats, em ordem (mais recente primeiro).
+
+    Observação: é um complemento (fansite). Se falhar, devolve lista vazia.
+    """
+    try:
+        safe = requests.utils.quote(name)
+        url = GUILDSTATS_DEATHS_URL.format(name=safe)
+        r = requests.get(url, timeout=timeout, headers=UA)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # acha a tabela que contém o header "Exp lost"
+        th = soup.find(lambda t: t.name in ("th", "td") and "Exp lost" in t.get_text(" ", strip=True))
+        if not th:
+            return []
+        table = th.find_parent("table")
+        if not table:
+            return []
+
+        out: List[str] = []
+        for tr in table.find_all("tr"):
+            tds = tr.find_all("td")
+            if len(tds) < 5:
+                continue
+            xp = tds[4].get_text(" ", strip=True)
+            xp = re.sub(r"\s+", " ", xp).strip()
+            if xp:
+                out.append(xp)
+        return out
+    except Exception:
+        return []
 
 
 __all__ = [
@@ -111,4 +227,6 @@ __all__ = [
     "fetch_character_snapshot",
     "fetch_character_tibiadata",
     "is_character_online_tibiadata",
+    "is_character_online_tibia_com",
+    "fetch_guildstats_deaths_xp",
 ]

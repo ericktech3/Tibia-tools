@@ -32,7 +32,13 @@ from kivymd.uix.menu import MDDropdownMenu
 # ---- IMPORTS DO CORE (com proteção para não “fechar sozinho” no Android) ----
 _CORE_IMPORT_ERROR = None
 try:
-    from core.api import fetch_character_tibiadata, fetch_worlds_tibiadata, is_character_online_tibiadata
+    from core.api import (
+        fetch_character_tibiadata,
+        fetch_worlds_tibiadata,
+        is_character_online_tibiadata,
+        is_character_online_tibia_com,
+        fetch_guildstats_deaths_xp,
+    )
     from core.storage import get_data_dir, safe_read_json, safe_write_json
     from core.bosses import fetch_exevopan_bosses
     from core.boosted import fetch_boosted
@@ -331,6 +337,7 @@ class TibiaToolsApp(MDApp):
             for d in deaths_list[:6]:
                 time_s = str(d.get("time") or d.get("date") or "").strip()
                 lvl_s = str(d.get("level") or "").strip()
+                xp_s = str(d.get("exp_lost") or d.get("xp_lost") or "").strip()
                 reason_s = str(d.get("reason") or d.get("description") or "").strip()
                 if not reason_s:
                     continue
@@ -338,6 +345,8 @@ class TibiaToolsApp(MDApp):
                 meta = time_s
                 if lvl_s:
                     meta = (meta + f" • lvl {lvl_s}").strip(" •")
+                if xp_s:
+                    meta = (meta + f" • xp {xp_s}").strip(" •")
 
                 short_reason = self._shorten_death_reason(reason_s)
                 it = TwoLineIconListItem(text=short_reason or reason_s, secondary_text=meta or " ")
@@ -390,18 +399,25 @@ class TibiaToolsApp(MDApp):
                 level = character.get("level", "N/A")
                 world = character.get("world", "N/A")
 
-                # Status: a API /v4/character pode ficar alguns segundos "atrasada".
-                # Para evitar falso OFFLINE, conferimos a lista de online do world e priorizamos ela.
+                # Status: a API /v4/character pode ficar "atrasada".
+                # Primeiro: tenta lista de online via TibiaData (/v4/world/{world}).
+                # Se falhar (ou disser OFFLINE), tenta fallback no site oficial (tibia.com).
                 status_raw = str(character.get("status") or "").strip().lower()
-                online_check = (
+
+                online_td = (
                     is_character_online_tibiadata(name, world)
                     if world and str(world).strip().upper() != "N/A"
                     else None
                 )
 
-                if online_check is True:
+                online_web = None
+                if (online_td is None or online_td is False) and world and str(world).strip().upper() != "N/A":
+                    online_web = is_character_online_tibia_com(name, world)
+
+                if online_td is True or online_web is True:
                     status = "online"
-                elif online_check is False:
+                elif (online_td is False or online_web is False) and status_raw != "online":
+                    # Só forçamos OFFLINE se o status_raw não estiver dizendo online.
                     status = "offline"
                 else:
                     status = status_raw or "N/A"
@@ -444,6 +460,18 @@ class TibiaToolsApp(MDApp):
                 deaths = (character.get('deaths') or character_wrapper.get('deaths') or data.get('deaths') or [])
                 if not isinstance(deaths, list):
                     deaths = []
+
+                # Complemento: XP lost por morte (fansite). Match por ordem (mais recente -> mais recente).
+                try:
+                    xp_list = fetch_guildstats_deaths_xp(title or name)
+                except Exception:
+                    xp_list = []
+                if xp_list:
+                    for i, d in enumerate(deaths):
+                        if i >= len(xp_list):
+                            break
+                        if isinstance(d, dict) and "exp_lost" not in d:
+                            d["exp_lost"] = xp_list[i]
 
                 payload = {
                     "title": title,
