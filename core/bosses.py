@@ -54,6 +54,19 @@ _FORBIDDEN_BOSS_PREFIX = {
     "servidor selecionado",
 }
 
+# Alguns textos de "Expected in: X day(s)" podem vazar para o parser (ex.: "day Dharalion").
+# Este helper remove prefixos de tempo indevidos antes do nome real do boss.
+_TIME_PREFIX_RE = re.compile(
+    r"^(?:\d+\s*)?(?:day|days|dia|dias|hour|hours|hora|horas|minute|minutes|minuto|minutos)\s+",
+    re.I,
+)
+
+def _clean_boss_name(name: str) -> str:
+    name = re.sub(r"\s+", " ", (name or "")).strip()
+    name = _TIME_PREFIX_RE.sub("", name).strip()
+    return name
+
+
 
 def _html_to_text(html: str) -> str:
     """Remove scripts/styles e converte tags HTML em texto com espaços."""
@@ -163,7 +176,7 @@ def _parse_from_next_data(html: str) -> List[Dict[str, str]]:
             name = name.get("name") or name.get("title")
         if not name:
             continue
-        boss = str(name).strip()
+        boss = _clean_boss_name(str(name))
         if _looks_like_nav_item(boss):
             continue
 
@@ -212,7 +225,7 @@ def _parse_from_text(html: str) -> List[Dict[str, str]]:
 
     out: List[Dict[str, str]] = []
     for m in _BOSS_NEAR_CHANCE_RE.finditer(text):
-        boss = (m.group("boss") or "").strip()
+        boss = _clean_boss_name((m.group("boss") or ""))
         if not boss or _looks_like_nav_item(boss):
             continue
 
