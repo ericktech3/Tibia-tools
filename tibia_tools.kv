@@ -259,17 +259,21 @@ RootSM:
                             elevation: 1
 
                             MDBoxLayout:
-                            size_hint_y: None
-                            height: dp(32)
+                                size_hint_y: None
+                                height: dp(32)
+                                spacing: dp(6)
 
-                            MDLabel:
-                                text: "Últimas mortes"
-                                font_style: "Subtitle1"
-                                bold: True
+                                MDLabel:
+                                    text: "Últimas mortes"
+                                    font_style: "Subtitle1"
+                                    bold: True
 
-                            MDIconButton:
-                                icon: "content-copy"
-                                on_release: app.copy_deaths_to_clipboard()
+                                Widget:
+                                    size_hint_x: 1
+
+                                MDIconButton:
+                                    icon: "content-copy"
+                                    on_release: app.copy_deaths_to_clipboard()
 
                             MDSeparator:
                                 height: dp(1)
