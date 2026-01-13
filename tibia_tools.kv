@@ -20,6 +20,10 @@ RootSM:
         name: "hunt"
     StaminaScreen:
         name: "stamina"
+    SettingsScreen:
+        name: "settings"
+    BossFavoritesScreen:
+        name: "boss_favorites"
 
 
 <HomeScreen@MDScreen>:
@@ -33,7 +37,138 @@ RootSM:
             elevation: 2
 
         MDBottomNavigation:
+            id: bottom_nav
             panel_color: app.theme_cls.bg_normal
+
+
+            MDBottomNavigationItem:
+                name: "tab_dashboard"
+                text: "Home"
+                icon: "home"
+
+                MDScrollView:
+                    do_scroll_x: False
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        MDCard:
+                            padding: dp(12)
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(6)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                MDBoxLayout:
+                                    size_hint_y: None
+                                    height: dp(36)
+
+                                    MDLabel:
+                                        text: "Boosted hoje"
+                                        bold: True
+
+                                    MDIconButton:
+                                        icon: "refresh"
+                                        on_release: app.dashboard_refresh()
+
+                                MDLabel:
+                                    id: dash_boost_creature
+                                    text: "Creature: -"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(6)
+
+                                MDLabel:
+                                    id: dash_boost_boss
+                                    text: "Boss: -"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(6)
+
+                                MDLabel:
+                                    id: dash_boost_updated
+                                    text: ""
+                                    theme_text_color: "Hint"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(6)
+
+                        MDCard:
+                            padding: dp(12)
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(6)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                MDBoxLayout:
+                                    size_hint_y: None
+                                    height: dp(36)
+
+                                    MDLabel:
+                                        text: "Último char"
+                                        bold: True
+
+                                    MDIconButton:
+                                        icon: "account-search"
+                                        on_release: app.select_home_tab("tab_char")
+
+                                MDLabel:
+                                    id: dash_last_char
+                                    text: "-"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(6)
+
+                                MDRaisedButton:
+                                    text: "Abrir último no Tibia.com"
+                                    on_release: app.dashboard_open_last_char()
+
+                        MDCard:
+                            padding: dp(12)
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(6)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                MDBoxLayout:
+                                    size_hint_y: None
+                                    height: dp(36)
+
+                                    MDLabel:
+                                        text: "Bosses favoritos (High)"
+                                        bold: True
+
+                                    MDIconButton:
+                                        icon: "skull"
+                                        on_release: app.open_more_target("bosses")
+
+                                MDLabel:
+                                    id: dash_boss_hint
+                                    text: "Configure favoritos na tela Bosses."
+                                    theme_text_color: "Hint"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(6)
+
+                                MDList:
+                                    id: dash_boss_list
 
             MDBottomNavigationItem:
                 name: "tab_char"
@@ -123,12 +258,18 @@ RootSM:
                             radius: [dp(16), dp(16), dp(16), dp(16)]
                             elevation: 1
 
+                            MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(32)
+
                             MDLabel:
                                 text: "Últimas mortes"
                                 font_style: "Subtitle1"
                                 bold: True
-                                size_hint_y: None
-                                height: self.texture_size[1] + dp(6)
+
+                            MDIconButton:
+                                icon: "content-copy"
+                                on_release: app.copy_deaths_to_clipboard()
 
                             MDSeparator:
                                 height: dp(1)
@@ -234,6 +375,10 @@ RootSM:
                             text: "Hunt Analyzer"
                             icon: "chart-bar"
                             on_release: app.open_more_target("hunt")
+                        MoreItem:
+                            text: "Configurações"
+                            icon: "cog"
+                            on_release: app.open_more_target("settings")
 
 
 <BossesScreen@MDScreen>:
@@ -275,6 +420,54 @@ RootSM:
                 text: ""
                 size_hint_y: None
                 height: self.texture_size[1] + dp(10)
+
+
+            MDBoxLayout:
+                size_hint_y: None
+                height: dp(56)
+                spacing: dp(8)
+
+                MDTextField:
+                    id: boss_search
+                    hint_text: "Buscar boss..."
+                    mode: "rectangle"
+                    on_text: app.bosses_apply_filters_debounced()
+
+                MDIconButton:
+                    id: boss_filter_btn
+                    icon: "filter-variant"
+                    on_release: app.open_boss_filter_menu()
+
+                MDIconButton:
+                    id: boss_sort_btn
+                    icon: "sort"
+                    on_release: app.open_boss_sort_menu()
+
+                MDIconButton:
+                    id: boss_fav_toggle
+                    icon: "star-outline"
+                    on_release: app.bosses_toggle_fav_only()
+
+                MDIconButton:
+                    icon: "star-box-multiple-outline"
+                    on_release: app.open_boss_favorites()
+
+            MDBoxLayout:
+                size_hint_y: None
+                height: dp(22)
+                spacing: dp(12)
+
+                MDLabel:
+                    id: boss_filter_label
+                    text: "All"
+                    theme_text_color: "Hint"
+                    size_hint_x: .5
+
+                MDLabel:
+                    id: boss_sort_label
+                    text: "Chance"
+                    theme_text_color: "Hint"
+                    halign: "right"
 
             ScrollView:
                 MDList:
@@ -321,6 +514,22 @@ RootSM:
                     MDLabel:
                         id: boost_boss
                         text: "-"
+
+            MDSeparator:
+                height: dp(1)
+
+            MDLabel:
+                text: "Histórico (7 dias)"
+                bold: True
+                size_hint_y: None
+                height: dp(24)
+
+            ScrollView:
+                do_scroll_x: False
+                size_hint_y: 1
+
+                MDList:
+                    id: boost_hist_list
 
 
 <TrainingScreen@MDScreen>:
@@ -488,6 +697,33 @@ RootSM:
             padding: dp(12)
             spacing: dp(10)
 
+
+            MDBoxLayout:
+                size_hint_y: None
+                height: dp(44)
+                spacing: dp(8)
+
+                MDIconButton:
+                    id: imb_tier_btn
+                    icon: "tag-outline"
+                    on_release: app.open_imb_tier_menu()
+
+                MDLabel:
+                    id: imb_tier_label
+                    text: "All"
+                    theme_text_color: "Hint"
+                    size_hint_x: None
+                    width: dp(60)
+
+                MDIconButton:
+                    id: imb_fav_toggle
+                    icon: "star-outline"
+                    on_release: app.imbuements_toggle_fav_only()
+
+                MDIconButton:
+                    icon: "content-copy"
+                    on_release: app.imbuements_copy_selected_hint()
+
             MDTextField:
                 id: imb_search
                 hint_text: "Buscar (ex: Vampirism, Strike...)"
@@ -533,6 +769,22 @@ RootSM:
                 MDRaisedButton:
                     text: "Analisar"
                     on_release: app.hunt_parse()
+
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(44)
+                    spacing: dp(8)
+
+                    MDRaisedButton:
+                        id: hunt_copy_btn
+                        text: "Copiar"
+                        on_release: app.hunt_copy()
+
+                    MDRaisedButton:
+                        id: hunt_share_btn
+                        text: "Compartilhar"
+                        on_release: app.hunt_share()
 
                 MDLabel:
                     id: hunt_status
@@ -639,3 +891,128 @@ RootSM:
                     text_size: self.width, None
                     size_hint_y: None
                     height: self.texture_size[1] + dp(20)
+
+
+<SettingsScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Configurações"
+            left_action_items: [["arrow-left", lambda x: app.back_home()]]
+            elevation: 2
+
+        ScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                MDLabel:
+                    text: "Notificações (ao abrir o app)"
+                    bold: True
+                    size_hint_y: None
+                    height: dp(24)
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(10)
+
+                    MDLabel:
+                        text: "Boosted mudou"
+                        valign: "middle"
+
+                    MDSwitch:
+                        id: set_notify_boosted
+                        active: False
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(10)
+
+                    MDLabel:
+                        text: "Boss favorito High"
+                        valign: "middle"
+
+                    MDSwitch:
+                        id: set_notify_boss_high
+                        active: False
+
+                MDSeparator:
+                    height: dp(1)
+
+                MDLabel:
+                    text: "Updates (GitHub)"
+                    bold: True
+                    size_hint_y: None
+                    height: dp(24)
+
+                MDTextField:
+                    id: set_repo_url
+                    hint_text: "URL do repo (ex: https://github.com/user/repo)"
+                    mode: "rectangle"
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(44)
+                    spacing: dp(10)
+
+                    MDRaisedButton:
+                        text: "Salvar"
+                        on_release: app.settings_save()
+
+                    MDRaisedButton:
+                        text: "Checar"
+                        on_release: app.settings_check_updates()
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(44)
+                    spacing: dp(10)
+
+                    MDRaisedButton:
+                        text: "Abrir releases"
+                        on_release: app.settings_open_releases()
+
+                    MDRaisedButton:
+                        text: "Limpar cache"
+                        on_release: app.settings_clear_cache()
+
+                MDLabel:
+                    id: set_status
+                    text: ""
+                    theme_text_color: "Hint"
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(6)
+
+
+<BossFavoritesScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Bosses Favoritos"
+            left_action_items: [["arrow-left", lambda x: app.go('bosses')]]
+            right_action_items: [["refresh", lambda x: app.boss_favorites_refresh()]]
+            elevation: 2
+
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: dp(12)
+            spacing: dp(10)
+
+            MDLabel:
+                id: boss_fav_status
+                text: "Favoritos: -"
+                size_hint_y: None
+                height: dp(24)
+
+            ScrollView:
+                MDList:
+                    id: boss_fav_list

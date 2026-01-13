@@ -8,14 +8,18 @@ Mais -> telas internas: Bosses (ExevoPan), Boosted, Treino (Exercise), Imbuement
 from __future__ import annotations
 
 import os
+import json
+import re
 import threading
 import webbrowser
 import traceback
 import math
+import requests
 from datetime import datetime, timedelta
 from urllib.parse import quote
 from typing import List, Optional
 
+from kivy.core.clipboard import Clipboard
 from kivy.lang import Builder
 from kivy.resources import resource_find
 from kivy.clock import Clock
@@ -69,6 +73,15 @@ class TibiaToolsApp(MDApp):
         self.data_dir = get_data_dir() if _CORE_IMPORT_ERROR is None else os.getcwd()
         os.makedirs(self.data_dir, exist_ok=True)
         self.fav_path = os.path.join(self.data_dir, "favorites.json")
+        self.prefs_path = os.path.join(self.data_dir, "prefs.json")
+        self.cache_path = os.path.join(self.data_dir, "cache.json")
+        self.prefs = {}
+        self.cache = {}
+        self._bosses_filter_debounce_ev = None
+        self._menu_boss_filter = None
+        self._menu_boss_sort = None
+        self._menu_imb_tier = None
+
 
         self._menu_world: Optional[MDDropdownMenu] = None
         self._menu_skill: Optional[MDDropdownMenu] = None
@@ -103,6 +116,11 @@ class TibiaToolsApp(MDApp):
         # só agenda funções que usam telas/ids se o KV carregou de verdade.
         if kv_ok and isinstance(root, ScreenManager):
             self.load_favorites()
+            self._load_prefs_cache()
+            Clock.schedule_once(lambda *_: self._apply_settings_to_ui(), 0)
+            Clock.schedule_once(lambda *_: self._set_initial_home_tab(), 0)
+            Clock.schedule_once(lambda *_: self.dashboard_refresh(), 0)
+
             Clock.schedule_once(lambda *_: self.refresh_favorites_list(), 0)
             Clock.schedule_once(lambda *_: self.update_boosted(), 0)
 
@@ -119,6 +137,16 @@ class TibiaToolsApp(MDApp):
     def back_home(self, *_):
         self.go("home")
 
+
+    def select_home_tab(self, tab_name: str):
+        """Seleciona uma aba dentro da HomeScreen (BottomNavigation)."""
+        try:
+            home = self.root.get_screen("home")
+            if "bottom_nav" in home.ids:
+                home.ids.bottom_nav.switch_tab(tab_name)
+        except Exception:
+            pass
+
     def open_more_target(self, target: str):
         self.go(target)
         if target == "bosses":
@@ -127,8 +155,191 @@ class TibiaToolsApp(MDApp):
             self._imbuements_load()
         elif target == "training":
             self._ensure_training_menus()
+        elif target == "settings":
+            self._apply_settings_to_ui()
+
+    
+    # --------------------
+    # Dashboard (Home)
+    # --------------------
+    def _send_notification(self, title: str, message: str):
+        # Notificação "best effort" (sem background)
+        try:
+            from plyer import notification  # type: ignore
+            notification.notify(title=title, message=message, app_name="Tibia Tools")
+            return
+        except Exception:
+            pass
+        self.toast(f"{title}: {message}")
+
+    def dashboard_refresh(self, *_):
+        """Atualiza o resumo do Dashboard usando cache e, se possível, dados ao vivo."""
+        try:
+            home = self.root.get_screen("home")
+            ids = home.ids
+        except Exception:
+            return
+
+        # último char
+        last_char = str(self._prefs_get("last_char", "") or "")
+        try:
+            ids.dash_last_char.text = last_char if last_char else "-"
+        except Exception:
+            pass
+
+        # boosted do cache (TTL 12h) e atualização ao vivo em background
+        cached_boost = self._cache_get("boosted", ttl_seconds=12 * 3600) or {}
+        if isinstance(cached_boost, dict) and cached_boost:
+            try:
+                ids.dash_boost_creature.text = f"Creature: {cached_boost.get('creature', '-')}"
+                ids.dash_boost_boss.text = f"Boss: {cached_boost.get('boss', '-')}"
+                ts = self.cache.get("boosted", {}).get("ts", "")
+                ids.dash_boost_updated.text = f"Atualizado: {ts.split('T')[0] if ts else ''}"
+            except Exception:
+                pass
+        else:
+            try:
+                ids.dash_boost_creature.text = "Creature: -"
+                ids.dash_boost_boss.text = "Boss: -"
+                ids.dash_boost_updated.text = "Sem cache ainda."
+            except Exception:
+                pass
+
+        # atualiza boosted ao vivo (não trava UI)
+        try:
+            self.update_boosted(silent=True)
+        except Exception:
+            pass
+
+        # bosses favoritos high (do cache do último world)
+        try:
+            ids.dash_boss_list.clear_widgets()
+        except Exception:
+            pass
+
+        favs = self._prefs_get("boss_favorites", []) or []
+        if not isinstance(favs, list):
+            favs = []
+
+        world = str(self._prefs_get("boss_last_world", "") or "")
+        cache_key = f"bosses:{world.lower()}" if world else ""
+        bosses = self._cache_get(cache_key, ttl_seconds=6 * 3600) if cache_key else None
+        if not bosses:
+            try:
+                ids.dash_boss_hint.text = "Sem cache de bosses ainda. Abra Bosses e toque em Buscar."
+            except Exception:
+                pass
+            return
+
+        high = []
+        for b in bosses:
+            try:
+                name = str(b.get("boss") or b.get("name") or "")
+                if name not in favs:
+                    continue
+                score = self._boss_chance_score(str(b.get("chance") or ""))
+                if score >= 70:
+                    high.append((score, b))
+            except Exception:
+                continue
+
+        high.sort(key=lambda t: t[0], reverse=True)
+        if not high:
+            try:
+                ids.dash_boss_hint.text = f"Nenhum favorito High em {world}."
+            except Exception:
+                pass
+            return
+
+        try:
+            ids.dash_boss_hint.text = f"World: {world}  •  High: {len(high)}"
+        except Exception:
+            pass
+
+        for _, b in high[:6]:
+            name = str(b.get("boss") or b.get("name") or "Boss")
+            chance = str(b.get("chance") or "").strip()
+            it = OneLineIconListItem(text=f"{name} ({chance})")
+            it.add_widget(IconLeftWidget(icon="star"))
+            it.bind(on_release=lambda _it, bb=b: self.bosses_open_dialog(bb))
+            try:
+                ids.dash_boss_list.add_widget(it)
+            except Exception:
+                pass
+
+        # alerta (apenas ao abrir/app na frente) - best effort
+        try:
+            if bool(self._prefs_get("notify_boss_high", True)) and high:
+                today = datetime.utcnow().date().isoformat()
+                last = str(self._prefs_get("boss_high_notified_date", "") or "")
+                if last != today:
+                    self._prefs_set("boss_high_notified_date", today)
+                    self._send_notification("Boss favorito HIGH", f"{high[0][1].get('boss','Boss')} está HIGH em {world}")
+        except Exception:
+            pass
+
+    def dashboard_open_last_char(self):
+        last_char = str(self._prefs_get("last_char", "") or "").strip()
+        if not last_char:
+            self.toast("Nenhum char salvo ainda.")
+            return
+        try:
+            webbrowser.open(f"https://www.tibia.com/community/?subtopic=characters&name={last_char.replace(' ', '+')}")
+        except Exception:
+            self.toast("Não consegui abrir o navegador.")
 
     # --------------------
+    # Clipboard / Share helpers
+    # --------------------
+    def copy_deaths_to_clipboard(self):
+        try:
+            home = self.root.get_screen("home")
+            title = (home.ids.char_title.text or "").strip()
+            payload = getattr(home, "_last_char_payload", None)
+            deaths = []
+            if isinstance(payload, dict):
+                deaths = payload.get("deaths") or []
+            lines = [f"Mortes - {title}"]
+            for d in deaths[:30]:
+                if not isinstance(d, dict):
+                    continue
+                when = str(d.get("time") or d.get("date") or "")
+                lvl = str(d.get("level") or "")
+                reason = str(d.get("reason") or "")
+                xp = str(d.get("exp_lost") or "")
+                parts = [p for p in [when, f"Level {lvl}" if lvl else "", xp, reason] if p]
+                lines.append(" - ".join(parts))
+            Clipboard.copy("\n".join(lines))
+            self.toast("Copiado.")
+        except Exception:
+            self.toast("Não consegui copiar.")
+
+    def hunt_copy(self):
+        try:
+            scr = self.root.get_screen("hunt")
+            Clipboard.copy(scr.ids.hunt_output.text or "")
+            self.toast("Copiado.")
+        except Exception:
+            self.toast("Nada para copiar.")
+
+    def hunt_share(self):
+        try:
+            scr = self.root.get_screen("hunt")
+            txt = (scr.ids.hunt_output.text or "").strip()
+            if not txt:
+                self.toast("Nada para compartilhar.")
+                return
+            try:
+                from plyer import share  # type: ignore
+                share.share(txt, title="Hunt Analyzer")
+                return
+            except Exception:
+                Clipboard.copy(txt)
+                self.toast("Copiado (share indisponível).")
+        except Exception:
+            self.toast("Falha ao compartilhar.")
+
+# --------------------
     # Storage
     # --------------------
     def load_favorites(self):
@@ -140,6 +351,169 @@ class TibiaToolsApp(MDApp):
 
     def save_favorites(self):
         safe_write_json(self.fav_path, self.favorites)
+
+
+    # --------------------
+    # Prefs / Cache (modo offline inteligente)
+    # --------------------
+    def _load_prefs_cache(self):
+        self.prefs = safe_read_json(self.prefs_path, default={}) or {}
+        if not isinstance(self.prefs, dict):
+            self.prefs = {}
+        self.cache = safe_read_json(self.cache_path, default={}) or {}
+        if not isinstance(self.cache, dict):
+            self.cache = {}
+
+    def _save_prefs(self):
+        if isinstance(self.prefs, dict):
+            safe_write_json(self.prefs_path, self.prefs)
+
+    def _save_cache(self):
+        if isinstance(self.cache, dict):
+            safe_write_json(self.cache_path, self.cache)
+
+    def _prefs_get(self, key: str, default=None):
+        try:
+            return self.prefs.get(key, default)
+        except Exception:
+            return default
+
+    def _prefs_set(self, key: str, value):
+        try:
+            self.prefs[key] = value
+            self._save_prefs()
+        except Exception:
+            pass
+
+    def _cache_get(self, key: str, ttl_seconds: int | None = None):
+        try:
+            item = self.cache.get(key)
+            if not isinstance(item, dict):
+                return None
+            ts = item.get("ts")
+            val = item.get("value")
+            if ttl_seconds is None:
+                return val
+            if not ts:
+                return None
+            try:
+                dt = datetime.fromisoformat(ts)
+            except Exception:
+                return None
+            age = (datetime.utcnow() - dt).total_seconds()
+            if age > ttl_seconds:
+                return None
+            return val
+        except Exception:
+            return None
+
+    def _cache_set(self, key: str, value):
+        try:
+            self.cache[key] = {"ts": datetime.utcnow().isoformat(), "value": value}
+            self._save_cache()
+        except Exception:
+            pass
+
+    def _cache_clear(self):
+        try:
+            self.cache = {}
+            self._save_cache()
+        except Exception:
+            pass
+
+    def _set_initial_home_tab(self, *_):
+        # abre direto no Dashboard
+        self.select_home_tab("tab_dashboard")
+
+    def _apply_settings_to_ui(self):
+        try:
+            scr = self.root.get_screen("settings")
+        except Exception:
+            return
+        try:
+            scr.ids.set_notify_boosted.active = bool(self._prefs_get("notify_boosted", True))
+            scr.ids.set_notify_boss_high.active = bool(self._prefs_get("notify_boss_high", True))
+            scr.ids.set_repo_url.text = str(self._prefs_get("repo_url", "") or "")
+        except Exception:
+            pass
+
+    def settings_save(self):
+        try:
+            scr = self.root.get_screen("settings")
+            self._prefs_set("notify_boosted", bool(scr.ids.set_notify_boosted.active))
+            self._prefs_set("notify_boss_high", bool(scr.ids.set_notify_boss_high.active))
+            self._prefs_set("repo_url", (scr.ids.set_repo_url.text or "").strip())
+            scr.ids.set_status.text = "Salvo."
+            self.toast("Configurações salvas.")
+        except Exception:
+            self.toast("Não consegui salvar as configurações.")
+
+    def _parse_github_repo(self, url: str):
+        url = (url or "").strip()
+        m = re.search(r"github\.com/([^/]+)/([^/#?]+)", url, re.I)
+        if not m:
+            return None
+        owner = m.group(1)
+        repo = m.group(2).replace(".git", "")
+        return owner, repo
+
+    def settings_open_releases(self):
+        url = str(self._prefs_get("repo_url", "") or "").strip()
+        if not url:
+            self.toast("Defina a URL do repo nas configurações.")
+            return
+        if "github.com" in url.lower() and "/releases" not in url.lower():
+            url = url.rstrip("/") + "/releases"
+        webbrowser.open(url)
+
+    def settings_check_updates(self):
+        scr = self.root.get_screen("settings")
+        url = str(self._prefs_get("repo_url", "") or "").strip()
+        parsed = self._parse_github_repo(url)
+        if not parsed:
+            self.toast("URL do GitHub inválida.")
+            return
+
+        owner, repo = parsed
+        scr.ids.set_status.text = "Checando..."
+        api = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+
+        def run():
+            try:
+                r = requests.get(api, timeout=15, headers={"User-Agent": "TibiaToolsApp"})
+                if r.status_code != 200:
+                    raise ValueError(f"HTTP {r.status_code}")
+                j = r.json()
+                tag = str(j.get("tag_name") or j.get("name") or "").strip() or "?"
+                html_url = str(j.get("html_url") or (url.rstrip("/") + "/releases") )
+                last_seen = str(self._prefs_get("last_release", "") or "")
+                Clock.schedule_once(lambda *_: self._updates_done(tag, html_url, last_seen), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda *_: setattr(scr.ids.set_status, "text", f"Erro ao checar: {e}"), 0)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _updates_done(self, tag: str, html_url: str, last_seen: str):
+        scr = self.root.get_screen("settings")
+        self._prefs_set("last_release", tag)
+        if last_seen and tag != last_seen:
+            scr.ids.set_status.text = f"Nova versão: {tag}"
+            self._show_text_dialog("Update disponível", f"Nova versão encontrada: {tag}\n\nAbrir releases?")
+            try:
+                webbrowser.open(html_url)
+            except Exception:
+                pass
+        else:
+            scr.ids.set_status.text = f"Última versão: {tag}"
+            self.toast("Sem updates (ou já visto).")
+
+    def settings_clear_cache(self):
+        self._cache_clear()
+        try:
+            self.root.get_screen("settings").ids.set_status.text = "Cache limpo."
+        except Exception:
+            pass
+        self.toast("Cache limpo.")
 
     def toast(self, message: str):
         """Mostra uma mensagem rápida sem derrubar o app."""
@@ -271,6 +645,20 @@ class TibiaToolsApp(MDApp):
         houses = payload.get("houses") or []
         deaths = payload.get("deaths", [])
 
+        try:
+            home._last_char_payload = payload
+        except Exception:
+            pass
+        try:
+            if title:
+                self._prefs_set("last_char", title)
+        except Exception:
+            pass
+        try:
+            self.dashboard_refresh()
+        except Exception:
+            pass
+
         st = status.strip().lower()
         if st == "online":
             badge = "[b][color=#2ecc71]ONLINE[/color][/b]"
@@ -279,7 +667,7 @@ class TibiaToolsApp(MDApp):
             badge = "[b][color=#e74c3c]OFFLINE[/color][/b]"
             status_icon = "wifi-off"
         else:
-            badge = "[b][color=#bdc3c7]N/A[/color][/b]"
+            badge = "[b][color=#bdc3c7]UNKNOWN[/color][/b]"
             status_icon = "help-circle-outline"
 
         # Layout novo (cards + listas)
@@ -419,14 +807,13 @@ class TibiaToolsApp(MDApp):
                 # - ONLINE se qualquer fonte confirmar
                 # - OFFLINE apenas se TODAS as fontes consultadas confirmarem
                 # - senão, usamos o status bruto da TibiaData (pode ser "offline" quando está atrasado)
+                # B: se não der pra confirmar com segurança, mostramos UNKNOWN (evita falso OFF)
                 if online_td is True or online_web is True:
                     status = "online"
                 elif online_td is False and online_web is False:
                     status = "offline"
-                elif status_raw:
-                    status = status_raw
                 else:
-                    status = "N/A"
+                    status = "unknown"
 
                 guild = character.get("guild") or {}
                 guild_name = ""
@@ -703,6 +1090,287 @@ class TibiaToolsApp(MDApp):
         )
         dlg.open()
 
+
+    def _boss_chance_score(self, chance: str) -> float:
+        c = (chance or "").strip().lower()
+        if not c:
+            return 0.0
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", c)
+        if m:
+            try:
+                return float(m.group(1).replace(",", "."))
+            except Exception:
+                return 0.0
+        if "no chance" in c or "sem chance" in c:
+            return 0.0
+        if "unknown" in c or "desconhecido" in c:
+            return 0.0
+        if "very low" in c:
+            return 10.0
+        if "low chance" in c or c == "low":
+            return 25.0
+        if "medium chance" in c or c == "medium":
+            return 50.0
+        if "high chance" in c or c == "high":
+            return 75.0
+        return 0.0
+
+    def boss_is_favorite(self, boss_name: str) -> bool:
+        favs = self._prefs_get("boss_favorites", []) or []
+        if not isinstance(favs, list):
+            favs = []
+        return (boss_name or "").strip() in favs
+
+    def boss_toggle_favorite(self, boss_name: str) -> bool:
+        boss_name = (boss_name or "").strip()
+        favs = self._prefs_get("boss_favorites", []) or []
+        if not isinstance(favs, list):
+            favs = []
+        if boss_name in favs:
+            favs.remove(boss_name)
+            self._prefs_set("boss_favorites", favs)
+            return False
+        favs.append(boss_name)
+        # remove duplicados mantendo ordem
+        seen = set()
+        out = []
+        for x in favs:
+            if x in seen:
+                continue
+            seen.add(x)
+            out.append(x)
+        self._prefs_set("boss_favorites", out)
+        return True
+
+    def bosses_toggle_fav_only(self):
+        cur = bool(self._prefs_get("boss_fav_only", False))
+        cur = not cur
+        self._prefs_set("boss_fav_only", cur)
+        try:
+            scr = self.root.get_screen("bosses")
+            if "boss_fav_toggle" in scr.ids:
+                scr.ids.boss_fav_toggle.icon = "star" if cur else "star-outline"
+        except Exception:
+            pass
+        self.bosses_apply_filters()
+
+    def bosses_apply_filters_debounced(self):
+        try:
+            if self._bosses_filter_debounce_ev:
+                self._bosses_filter_debounce_ev.cancel()
+        except Exception:
+            pass
+        self._bosses_filter_debounce_ev = Clock.schedule_once(lambda *_: self.bosses_apply_filters(), 0.15)
+
+    def open_boss_filter_menu(self):
+        scr = self.root.get_screen("bosses")
+        caller = scr.ids.get("boss_filter_btn")
+        if caller is None:
+            return
+        options = ["All", "High", "Medium+", "Low+", "No chance", "Unknown"]
+        items = [{"text": opt, "on_release": (lambda x=opt: self._set_boss_filter(x))} for opt in options]
+        if self._menu_boss_filter:
+            self._menu_boss_filter.dismiss()
+        self._menu_boss_filter = MDDropdownMenu(caller=caller, items=items, width_mult=4, max_height=dp(320))
+        self._menu_boss_filter.open()
+
+    def _set_boss_filter(self, value: str):
+        self._prefs_set("boss_filter", value)
+        try:
+            scr = self.root.get_screen("bosses")
+            if "boss_filter_label" in scr.ids:
+                scr.ids.boss_filter_label.text = value
+        except Exception:
+            pass
+        if self._menu_boss_filter:
+            self._menu_boss_filter.dismiss()
+        self.bosses_apply_filters()
+
+    def open_boss_sort_menu(self):
+        scr = self.root.get_screen("bosses")
+        caller = scr.ids.get("boss_sort_btn")
+        if caller is None:
+            return
+        options = ["Chance", "Name", "Favorites first"]
+        items = [{"text": opt, "on_release": (lambda x=opt: self._set_boss_sort(x))} for opt in options]
+        if self._menu_boss_sort:
+            self._menu_boss_sort.dismiss()
+        self._menu_boss_sort = MDDropdownMenu(caller=caller, items=items, width_mult=4, max_height=dp(260))
+        self._menu_boss_sort.open()
+
+    def _set_boss_sort(self, value: str):
+        self._prefs_set("boss_sort", value)
+        try:
+            scr = self.root.get_screen("bosses")
+            if "boss_sort_label" in scr.ids:
+                scr.ids.boss_sort_label.text = value
+        except Exception:
+            pass
+        if self._menu_boss_sort:
+            self._menu_boss_sort.dismiss()
+        self.bosses_apply_filters()
+
+    def open_boss_favorites(self):
+        self.go("boss_favorites")
+        self.boss_favorites_refresh()
+
+    def bosses_open_dialog(self, boss_dict):
+        try:
+            name = str(boss_dict.get("boss") or boss_dict.get("name") or "Boss").strip()
+            chance = str(boss_dict.get("chance") or "").strip()
+            status = str(boss_dict.get("status") or "").strip()
+        except Exception:
+            return
+
+        url = self._boss_wiki_url(name)
+
+        def toggle(*_):
+            fav = self.boss_toggle_favorite(name)
+            self.toast("Favoritado." if fav else "Removido dos favoritos.")
+            try:
+                dlg.dismiss()
+            except Exception:
+                pass
+            self.bosses_apply_filters()
+            self.dashboard_refresh()
+
+        def copy(*_):
+            try:
+                Clipboard.copy(url)
+                self.toast("Link copiado.")
+            except Exception:
+                self.toast("Não consegui copiar.")
+            try:
+                dlg.dismiss()
+            except Exception:
+                pass
+
+        def open_url(*_):
+            try:
+                webbrowser.open(url)
+            except Exception:
+                self.toast("Não consegui abrir o navegador.")
+            try:
+                dlg.dismiss()
+            except Exception:
+                pass
+
+        star = "REMOVER ⭐" if self.boss_is_favorite(name) else "FAVORITAR ⭐"
+        txt = "\n".join([x for x in [f"Chance: {chance}" if chance else "", status] if x]).strip() or " "
+        dlg = MDDialog(
+            title=name,
+            text=txt,
+            buttons=[
+                MDFlatButton(text=star, on_release=toggle),
+                MDFlatButton(text="COPIAR LINK", on_release=copy),
+                MDFlatButton(text="ABRIR", on_release=open_url),
+                MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss()),
+            ],
+        )
+        dlg.open()
+
+    def bosses_apply_filters(self):
+        scr = self.root.get_screen("bosses")
+        bosses = getattr(scr, "bosses_raw", []) or []
+        if not isinstance(bosses, list):
+            bosses = []
+
+        q = ""
+        if "boss_search" in scr.ids:
+            q = (scr.ids.boss_search.text or "").strip().lower()
+
+        bf = str(self._prefs_get("boss_filter", "All") or "All")
+        bs = str(self._prefs_get("boss_sort", "Chance") or "Chance")
+        fav_only = bool(self._prefs_get("boss_fav_only", False))
+        favs = self._prefs_get("boss_favorites", []) or []
+        if not isinstance(favs, list):
+            favs = []
+
+        def match(b: dict) -> bool:
+            name = str(b.get("boss") or b.get("name") or "")
+            if q and q not in name.lower():
+                return False
+            if fav_only and name not in favs:
+                return False
+
+            chance = str(b.get("chance") or "")
+            score = self._boss_chance_score(chance)
+            lowc = chance.lower()
+
+            if bf == "High":
+                return score >= 70.0
+            if bf == "Medium+":
+                return score >= 40.0
+            if bf == "Low+":
+                return score >= 10.0
+            if bf == "No chance":
+                return ("no chance" in lowc) or ("sem chance" in lowc)
+            if bf == "Unknown":
+                return score == 0.0 and ("unknown" in lowc or "desconhecido" in lowc or (not chance))
+            return True
+
+        filtered = [b for b in bosses if isinstance(b, dict) and match(b)]
+
+        if bs == "Name":
+            filtered.sort(key=lambda b: str(b.get("boss") or b.get("name") or "").lower())
+        elif bs == "Favorites first":
+            def key(b):
+                nm = str(b.get("boss") or b.get("name") or "")
+                return (0 if nm in favs else 1, -self._boss_chance_score(str(b.get("chance") or "")), nm.lower())
+            filtered.sort(key=key)
+        else:
+            filtered.sort(key=lambda b: self._boss_chance_score(str(b.get("chance") or "")), reverse=True)
+
+        scr.ids.boss_list.clear_widgets()
+        scr.ids.boss_status.text = f"Bosses: {len(filtered)} (de {len(bosses)})"
+
+        if not filtered:
+            item = OneLineIconListItem(text="Nada encontrado com esses filtros.")
+            item.add_widget(IconLeftWidget(icon="magnify"))
+            scr.ids.boss_list.add_widget(item)
+            return
+
+        for b in filtered[:200]:
+            name = str(b.get("boss") or b.get("name") or "Boss")
+            chance = str(b.get("chance") or "").strip()
+            status = str(b.get("status") or "").strip()
+            sec = " • ".join([x for x in [chance, status] if x]) or " "
+            item = TwoLineIconListItem(text=name, secondary_text=sec)
+            icon = "star" if self.boss_is_favorite(name) else "skull"
+            item.add_widget(IconLeftWidget(icon=icon))
+            item.bind(on_release=lambda _it, bb=b: self.bosses_open_dialog(bb))
+            scr.ids.boss_list.add_widget(item)
+
+    def boss_favorites_refresh(self):
+        scr = self.root.get_screen("boss_favorites")
+        favs = self._prefs_get("boss_favorites", []) or []
+        if not isinstance(favs, list):
+            favs = []
+        scr.ids.boss_fav_list.clear_widgets()
+        if not favs:
+            scr.ids.boss_fav_status.text = "Sem favoritos. Favorite bosses na tela Bosses."
+            it = OneLineIconListItem(text="Sem favoritos ainda.")
+            it.add_widget(IconLeftWidget(icon="star-outline"))
+            scr.ids.boss_fav_list.add_widget(it)
+            return
+
+        world = str(self._prefs_get("boss_last_world", "") or "")
+        cache_key = f"bosses:{world.lower()}" if world else ""
+        bosses = self._cache_get(cache_key, ttl_seconds=6 * 3600) if cache_key else None
+
+        scr.ids.boss_fav_status.text = f"Favoritos: {len(favs)}" + (f" • World: {world}" if world else "")
+        for name in favs[:200]:
+            chance_txt = ""
+            if isinstance(bosses, list):
+                for b in bosses:
+                    if str(b.get("boss") or b.get("name") or "") == name:
+                        chance_txt = str(b.get("chance") or "").strip()
+                        break
+            item = OneLineIconListItem(text=f"{name}{(' ('+chance_txt+')') if chance_txt else ''}")
+            item.add_widget(IconLeftWidget(icon="star"))
+            item.bind(on_release=lambda _it, n=name: self.bosses_open_dialog({"boss": n, "chance": chance_txt}))
+            scr.ids.boss_fav_list.add_widget(item)
+
     def _bosses_refresh_worlds(self):
         scr = self.root.get_screen("bosses")
         scr.ids.boss_status.text = "Carregando worlds..."
@@ -713,6 +1381,13 @@ class TibiaToolsApp(MDApp):
 
         def done(worlds):
             scr.ids.boss_status.text = f"Worlds: {len(worlds)}"
+            # restaura último world
+            try:
+                last = str(self._prefs_get("boss_last_world", "") or "").strip()
+                if last:
+                    scr.ids.world_field.text = last
+            except Exception:
+                pass
             items = [{"text": w, "on_release": (lambda x=w: self._select_world(x))} for w in worlds[:400]]
             if self._menu_world:
                 self._menu_world.dismiss()
@@ -730,6 +1405,10 @@ class TibiaToolsApp(MDApp):
     def _select_world(self, world: str):
         scr = self.root.get_screen("bosses")
         scr.ids.world_field.text = world
+        try:
+            self._prefs_set("boss_last_world", world)
+        except Exception:
+            pass
         if self._menu_world:
             self._menu_world.dismiss()
 
@@ -740,8 +1419,17 @@ class TibiaToolsApp(MDApp):
             self.toast("Digite o world.")
             return
 
+        try:
+            self._prefs_set("boss_last_world", world)
+        except Exception:
+            pass
         scr.ids.boss_status.text = "Buscando bosses..."
         scr.ids.boss_list.clear_widgets()
+        for _ in range(6):
+            it = OneLineIconListItem(text="Carregando...")
+            it.add_widget(IconLeftWidget(icon="cloud-download"))
+            scr.ids.boss_list.add_widget(it)
+
 
         def run():
             try:
@@ -754,45 +1442,121 @@ class TibiaToolsApp(MDApp):
 
     def _bosses_done(self, bosses):
         scr = self.root.get_screen("bosses")
-        scr.ids.boss_list.clear_widgets()
         if not bosses:
+            scr.ids.boss_list.clear_widgets()
             scr.ids.boss_status.text = "Nada encontrado (ou ExevoPan indisponível)."
             return
-        scr.ids.boss_status.text = f"Encontrado(s): {len(bosses)}"
-        for b in bosses[:200]:
-            title = b.get("boss") or b.get("name") or "Boss"
-            chance = b.get("chance") or ""
-            status = b.get("status") or ""
-            extra = " | ".join([x for x in [chance, status] if x])
-            item = OneLineIconListItem(text=f"{title}{(' - ' + extra) if extra else ''}")
-            item.add_widget(IconLeftWidget(icon="skull"))
-            item.bind(on_release=lambda _item, n=title: self._boss_open_prompt(n))
-            scr.ids.boss_list.add_widget(item)
+
+        # guarda raw para filtros e salva cache (TTL 6h)
+        scr.bosses_raw = bosses
+        world = (scr.ids.world_field.text or "").strip()
+        if world:
+            self._cache_set(f"bosses:{world.lower()}", bosses)
+
+        # aplica prefs e UI labels
+        try:
+            if "boss_filter_label" in scr.ids:
+                scr.ids.boss_filter_label.text = str(self._prefs_get("boss_filter", "All") or "All")
+            if "boss_sort_label" in scr.ids:
+                scr.ids.boss_sort_label.text = str(self._prefs_get("boss_sort", "Chance") or "Chance")
+            if "boss_fav_toggle" in scr.ids:
+                scr.ids.boss_fav_toggle.icon = "star" if bool(self._prefs_get("boss_fav_only", False)) else "star-outline"
+        except Exception:
+            pass
+
+        self.bosses_apply_filters()
+        self.dashboard_refresh()
 
     # --------------------
     # Boosted
+
     # --------------------
-    def update_boosted(self):
+    def update_boosted(self, silent: bool = False):
         scr = self.root.get_screen("boosted")
-        scr.ids.boost_status.text = "Atualizando..."
+        if not silent:
+            scr.ids.boost_status.text = "Atualizando..."
+        else:
+            # não suja o status se for atualização usada pelo dashboard
+            if not (scr.ids.boost_status.text or "").strip():
+                scr.ids.boost_status.text = "Atualizando..."
 
         def run():
             try:
                 data = fetch_boosted()
-                Clock.schedule_once(lambda *_: self._boosted_done(data), 0)
+                Clock.schedule_once(lambda *_: self._boosted_done(data, silent=silent), 0)
             except Exception as e:
-                Clock.schedule_once(lambda *_: setattr(scr.ids.boost_status, "text", f"Erro: {e}"), 0)
+                if not silent:
+                    Clock.schedule_once(lambda *_: setattr(scr.ids.boost_status, "text", f"Erro: {e}"), 0)
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _boosted_done(self, data):
+    def _boosted_done(self, data, silent: bool = False):
         scr = self.root.get_screen("boosted")
         if not data:
-            scr.ids.boost_status.text = "Falha ao buscar Boosted."
+            if not silent:
+                scr.ids.boost_status.text = "Falha ao buscar Boosted."
             return
         scr.ids.boost_status.text = "OK"
         scr.ids.boost_creature.text = data.get("creature", "N/A")
         scr.ids.boost_boss.text = data.get("boss", "N/A")
+
+        # cache + histórico (7 dias)
+        try:
+            self._cache_set("boosted", data)
+        except Exception:
+            pass
+
+        try:
+            hist = self._prefs_get("boosted_history", []) or []
+            if not isinstance(hist, list):
+                hist = []
+            today = datetime.utcnow().date().isoformat()
+            entry = {"date": today, "creature": data.get("creature"), "boss": data.get("boss")}
+            # remove do mesmo dia e reinsere no topo
+            hist = [h for h in hist if isinstance(h, dict) and h.get("date") != today]
+            hist.insert(0, entry)
+            hist = hist[:7]
+            self._prefs_set("boosted_history", hist)
+        except Exception:
+            pass
+
+        # UI: histórico
+        try:
+            if "boost_hist_list" in scr.ids:
+                scr.ids.boost_hist_list.clear_widgets()
+                hist = self._prefs_get("boosted_history", []) or []
+                if isinstance(hist, list) and hist:
+                    for h in hist:
+                        if not isinstance(h, dict):
+                            continue
+                        dt = str(h.get("date") or "")
+                        cr = str(h.get("creature") or "-")
+                        bb = str(h.get("boss") or "-")
+                        it = TwoLineIconListItem(text=f"{dt}", secondary_text=f"{cr} • {bb}")
+                        it.add_widget(IconLeftWidget(icon="history"))
+                        scr.ids.boost_hist_list.add_widget(it)
+        except Exception:
+            pass
+
+        # notificação 1x ao dia se mudou
+        try:
+            if bool(self._prefs_get("notify_boosted", True)):
+                today = datetime.utcnow().date().isoformat()
+                last_date = str(self._prefs_get("boosted_notified_date", "") or "")
+                last_seen = self._prefs_get("boosted_last_seen", {}) or {}
+                changed = (isinstance(last_seen, dict) and (last_seen.get("creature") != data.get("creature") or last_seen.get("boss") != data.get("boss")))
+                if changed and last_date != today:
+                    self._prefs_set("boosted_notified_date", today)
+                    self._send_notification("Boosted mudou", f"{data.get('creature','-')} • {data.get('boss','-')}")
+                self._prefs_set("boosted_last_seen", data)
+        except Exception:
+            pass
+
+        # atualiza dashboard
+        try:
+            self.dashboard_refresh()
+        except Exception:
+            pass
 
     # --------------------
     # Training (Exercise)
@@ -941,6 +1705,63 @@ class TibiaToolsApp(MDApp):
     # --------------------
     # Imbuements
     # --------------------
+
+    def imbuement_is_favorite(self, name: str) -> bool:
+        favs = self._prefs_get("imb_favorites", []) or []
+        if not isinstance(favs, list):
+            favs = []
+        return (name or "").strip() in favs
+
+    def imbuement_toggle_favorite(self, name: str) -> bool:
+        name = (name or "").strip()
+        favs = self._prefs_get("imb_favorites", []) or []
+        if not isinstance(favs, list):
+            favs = []
+        if name in favs:
+            favs.remove(name)
+            self._prefs_set("imb_favorites", favs)
+            return False
+        favs.append(name)
+        self._prefs_set("imb_favorites", favs)
+        return True
+
+    def open_imb_tier_menu(self):
+        scr = self.root.get_screen("imbuements")
+        caller = scr.ids.get("imb_tier_btn")
+        if caller is None:
+            return
+        options = ["All", "Basic", "Intricate", "Powerful"]
+        items = [{"text": opt, "on_release": (lambda x=opt: self._set_imb_tier(x))} for opt in options]
+        if self._menu_imb_tier:
+            self._menu_imb_tier.dismiss()
+        self._menu_imb_tier = MDDropdownMenu(caller=caller, items=items, width_mult=4, max_height=dp(220))
+        self._menu_imb_tier.open()
+
+    def _set_imb_tier(self, value: str):
+        self._prefs_set("imb_tier", value)
+        try:
+            scr = self.root.get_screen("imbuements")
+            scr.ids.imb_tier_label.text = value
+        except Exception:
+            pass
+        if self._menu_imb_tier:
+            self._menu_imb_tier.dismiss()
+        self.imbuements_refresh_list()
+
+    def imbuements_toggle_fav_only(self):
+        cur = bool(self._prefs_get("imb_fav_only", False))
+        cur = not cur
+        self._prefs_set("imb_fav_only", cur)
+        try:
+            scr = self.root.get_screen("imbuements")
+            scr.ids.imb_fav_toggle.icon = "star" if cur else "star-outline"
+        except Exception:
+            pass
+        self.imbuements_refresh_list()
+
+    def imbuements_copy_selected_hint(self):
+        self.toast("Abra um imbuement e use o botão COPIAR no dialog.")
+
     def _imbuements_load(self):
         scr = self.root.get_screen("imbuements")
         scr.entries = []
@@ -960,18 +1781,45 @@ class TibiaToolsApp(MDApp):
             return
         scr.entries = data
         scr.ids.imb_status.text = f"Imbuements: {len(data)}"
+        try:
+            scr.ids.imb_tier_label.text = str(self._prefs_get("imb_tier", "All") or "All")
+            scr.ids.imb_fav_toggle.icon = "star" if bool(self._prefs_get("imb_fav_only", False)) else "star-outline"
+        except Exception:
+            pass
         self.imbuements_refresh_list()
 
     def imbuements_refresh_list(self):
         scr = self.root.get_screen("imbuements")
         q = (scr.ids.imb_search.text or "").strip().lower()
+        tier = str(self._prefs_get("imb_tier", "All") or "All")
+        fav_only = bool(self._prefs_get("imb_fav_only", False))
+        favs = self._prefs_get("imb_favorites", []) or []
+        if not isinstance(favs, list):
+            favs = []
+
         scr.ids.imb_list.clear_widgets()
         entries: List[ImbuementEntry] = getattr(scr, "entries", [])
-        filtered = [e for e in entries if q in e.name.lower()] if q else entries
+
+        def matches(ent: ImbuementEntry) -> bool:
+            if q and q not in ent.name.lower():
+                return False
+            if fav_only and ent.name not in favs:
+                return False
+            if tier == "Basic" and not (ent.basic or "").strip():
+                return False
+            if tier == "Intricate" and not (ent.intricate or "").strip():
+                return False
+            if tier == "Powerful" and not (ent.powerful or "").strip():
+                return False
+            return True
+
+        filtered = [e for e in entries if matches(e)]
+        scr.ids.imb_status.text = f"Imbuements: {len(filtered)}"
 
         for e in filtered[:200]:
+            icon = "star" if self.imbuement_is_favorite(e.name) else "flash"
             item = OneLineIconListItem(text=e.name)
-            item.add_widget(IconLeftWidget(icon="flash"))
+            item.add_widget(IconLeftWidget(icon=icon))
             item.bind(on_release=lambda _item, ent=e: self._imbu_show(ent))
             scr.ids.imb_list.add_widget(item)
 
@@ -979,11 +1827,31 @@ class TibiaToolsApp(MDApp):
         # Abre primeiro com placeholder e depois carrega os itens (sob demanda)
         title = (ent.name or "").strip()
 
+        def copy_now(*_):
+            try:
+                Clipboard.copy(getattr(dlg, "_last_text", "") or "")
+                self.toast("Copiado.")
+            except Exception:
+                self.toast("Ainda não carregou.")
+
+        def toggle_fav(*_):
+            fav = self.imbuement_toggle_favorite(title)
+            self.toast("Favoritado." if fav else "Removido dos favoritos.")
+            try:
+                dlg.dismiss()
+            except Exception:
+                pass
+            self.imbuements_refresh_list()
+
+        fav_txt = "REMOVER ⭐" if self.imbuement_is_favorite(title) else "FAVORITAR ⭐"
+
         dlg = MDDialog(
             title=title,
             text="Carregando detalhes...",
             buttons=[
-                MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss())
+                MDFlatButton(text=fav_txt, on_release=toggle_fav),
+                MDFlatButton(text="COPIAR", on_release=copy_now),
+                MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss()),
             ],
         )
         dlg.open()
@@ -1031,7 +1899,10 @@ class TibiaToolsApp(MDApp):
                     + fmt("powerful", "Powerful")
                     + "\n\n(Fonte: TibiaWiki BR)"
                 )
-                Clock.schedule_once(lambda *_: setattr(dlg, "text", text), 0)
+                def _set_text(*_):
+                    setattr(dlg, "text", text)
+                    setattr(dlg, "_last_text", text)
+                Clock.schedule_once(_set_text, 0)
             except Exception as e:
                 Clock.schedule_once(lambda *_: setattr(dlg, "text", f"Erro: {e}"), 0)
 
