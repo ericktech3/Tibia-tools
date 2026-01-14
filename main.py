@@ -11,6 +11,8 @@ import os
 import json
 import re
 import threading
+import time
+import urllib.parse
 import webbrowser
 import traceback
 import math
@@ -87,6 +89,10 @@ class TibiaToolsApp(MDApp):
         self._menu_skill: Optional[MDDropdownMenu] = None
         self._menu_vocation: Optional[MDDropdownMenu] = None
         self._menu_weapon: Optional[MDDropdownMenu] = None
+
+        # Favorites (chars) UI/status helpers
+        self._fav_items = {}  # lower(char_name) -> list item
+        self._fav_status_job_id = 0
 
     def build(self):
         self.title = "Tibia Tools"
@@ -949,17 +955,98 @@ class TibiaToolsApp(MDApp):
         container = home.ids.fav_list
         container.clear_widgets()
 
+        # Each refresh spawns a new status job. Older jobs stop automatically.
+        self._fav_status_job_id += 1
+        job_id = self._fav_status_job_id
+        self._fav_items = {}
+
         if not self.favorites:
             item = OneLineIconListItem(text="Sem favoritos. Adicione no Char.")
             item.add_widget(IconLeftWidget(icon="star-outline"))
             container.add_widget(item)
             return
 
-        for name in self.favorites:
-            item = OneLineIconListItem(text=name)
+        # Render quickly with cached status (if available), then refresh in background.
+        names = list(self.favorites)
+        for name in names:
+            state = self._get_cached_fav_status(name)
+            secondary, color = self._fav_status_presentation(state)
+
+            item = TwoLineIconListItem(text=name, secondary_text=secondary)
             item.add_widget(IconLeftWidget(icon="account"))
+            item.secondary_theme_text_color = "Custom"
+            item.secondary_text_color = color
             item.bind(on_release=lambda _item, n=name: self._fav_actions(n))
+
+            self._fav_items[name.strip().lower()] = item
             container.add_widget(item)
+
+        threading.Thread(
+            target=self._refresh_fav_statuses_worker,
+            args=(names, job_id),
+            daemon=True,
+        ).start()
+
+    def _get_cached_fav_status(self, name: str) -> Optional[str]:
+        key = f"fav_status:{(name or '').strip().lower()}"
+        cached = self._cache_get(key, ttl_seconds=180)
+        if isinstance(cached, dict):
+            return cached.get("state")
+        if isinstance(cached, str):
+            return cached
+        return None
+
+    def _fav_status_presentation(self, state: Optional[str]):
+        """Return (secondary_text, rgba_color) for a favorite status."""
+        s = (state or "").lower().strip()
+        if s == "online":
+            return "ONLINE", (0.2, 0.85, 0.2, 1)
+        if s == "offline":
+            return "OFFLINE", (0.95, 0.25, 0.25, 1)
+        if s == "unknown":
+            return "Status: desconhecido", (0.7, 0.7, 0.7, 1)
+        return "Verificando...", (0.7, 0.7, 0.7, 1)
+
+    def _refresh_fav_statuses_worker(self, names: List[str], job_id: int):
+        """Background worker: refresh online/offline status for favorites."""
+        for name in names:
+            # If user refreshed the list again, stop this job.
+            if job_id != self._fav_status_job_id:
+                return
+
+            state = self._fetch_character_online_state(name)
+            key = f"fav_status:{(name or '').strip().lower()}"
+            self._cache_set(key, {"state": state})
+
+            Clock.schedule_once(lambda *_dt, n=name, st=state: self._set_fav_item_status(n, st), 0)
+            time.sleep(0.15)
+
+    def _fetch_character_online_state(self, name: str) -> str:
+        """Best-effort: Tibia.com first, then Tibiadata. Returns online/offline/unknown."""
+        try:
+            res = api.is_character_online_tibia_com(name, timeout=6)
+            if res is not None:
+                return "online" if res else "offline"
+        except Exception:
+            pass
+
+        try:
+            res = api.is_character_online_tibiadata(name, timeout=6)
+            if res is not None:
+                return "online" if res else "offline"
+        except Exception:
+            pass
+
+        return "unknown"
+
+    def _set_fav_item_status(self, name: str, state: str):
+        item = self._fav_items.get((name or "").strip().lower())
+        if not item:
+            return
+        secondary, color = self._fav_status_presentation(state)
+        item.secondary_text = secondary
+        item.secondary_theme_text_color = "Custom"
+        item.secondary_text_color = color
 
     def _fav_actions(self, name: str):
         def remove(*_):
@@ -970,6 +1057,22 @@ class TibiaToolsApp(MDApp):
                 self.toast("Removido.")
             dlg.dismiss()
 
+        def view_in_app(*_):
+            # Go to Char tab and load the character in-app.
+            try:
+                home = self.root.get_screen("home")
+                try:
+                    home.ids.bottom_nav.switch_tab("tab_char")
+                except Exception:
+                    # Fallback for older KivyMD versions
+                    home.ids.bottom_nav.current = "tab_char"
+                home.ids.char_name.text = name
+            except Exception:
+                pass
+            dlg.dismiss()
+            # Trigger a search (uses the char_name field)
+            self.search_character()
+
         def open_char(*_):
             webbrowser.open(f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}")
             dlg.dismiss()
@@ -978,7 +1081,8 @@ class TibiaToolsApp(MDApp):
             title=name,
             text="O que você quer fazer?",
             buttons=[
-                MDFlatButton(text="ABRIR", on_release=open_char),
+                MDFlatButton(text="VER NO APP", on_release=view_in_app),
+                MDFlatButton(text="ABRIR NO SITE", on_release=open_char),
                 MDFlatButton(text="REMOVER", on_release=remove),
                 MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss()),
             ],
