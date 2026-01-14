@@ -1009,6 +1009,104 @@ class TibiaToolsApp(MDApp):
             return "Online", (0.2, 0.75, 0.35, 1)
         return "Offline", (0.95, 0.3, 0.3, 1)
 
+
+    def _set_fav_item_status(self, name: str, state) -> None:
+        """Atualiza o status (Online/Offline) no item da lista de favoritos e no cache.
+
+        Este método é chamado via Clock no thread principal.
+        """
+        try:
+            key = (name or "").strip().lower()
+            if not key:
+                return
+
+            # atualiza cache em memória + cache persistente simples
+            self._fav_status_cache[key] = state
+            try:
+                self._cache_set(f"fav_status:{key}", state)
+            except Exception:
+                pass
+
+            item = self._fav_items.get(key)
+            if not item:
+                return
+
+            label, color = self._fav_status_presentation(state)
+            item.secondary_text = label
+            item.secondary_text_color = color
+        except Exception as e:
+            print(f"[FAV] Erro ao atualizar status de '{name}': {e}")
+
+    def _dismiss_fav_menu(self) -> None:
+        try:
+            if getattr(self, "_fav_menu", None):
+                self._fav_menu.dismiss()
+        except Exception:
+            pass
+        self._fav_menu = None
+
+    def _open_fav_in_app(self, name: str) -> None:
+        """Abre o char no app (aba Char) e executa a busca."""
+        self._dismiss_fav_menu()
+        try:
+            home = self.root.get_screen("home")
+            # troca para a aba Char
+            nav = home.ids.get("bottom_nav")
+            if nav is not None:
+                try:
+                    if hasattr(nav, "switch_tab"):
+                        nav.switch_tab("tab_char")
+                    else:
+                        nav.current = "tab_char"
+                except Exception:
+                    pass
+
+            # preenche o nome e busca
+            if "char_name" in home.ids:
+                home.ids.char_name.text = name
+            Clock.schedule_once(lambda dt: self.search_character(), 0.05)
+        except Exception as e:
+            print(f"[FAV] Erro ao abrir no app: {e}")
+
+    def _open_fav_on_site(self, name: str) -> None:
+        """Abre o char no site oficial do Tibia."""
+        self._dismiss_fav_menu()
+        try:
+            url = (
+                "https://www.tibia.com/community/?subtopic=characters&name="
+                + urllib.parse.quote_plus(name)
+            )
+            webbrowser.open(url)
+        except Exception as e:
+            print(f"[FAV] Erro ao abrir no site: {e}")
+
+    def _remove_favorite(self, name: str) -> None:
+        """Remove o char dos favoritos."""
+        self._dismiss_fav_menu()
+        try:
+            key = (name or "").strip().lower()
+            if not key:
+                return
+
+            before = len(self.favorites)
+            self.favorites = [n for n in self.favorites if (n or "").strip().lower() != key]
+
+            if len(self.favorites) != before:
+                self.save_favorites()
+                # limpa cache relacionado (opcional)
+                try:
+                    self._cache_set(f"fav_status:{key}", None)
+                except Exception:
+                    pass
+                self._fav_status_cache.pop(key, None)
+
+                self.refresh_favorites_list()
+                try:
+                    Snackbar(text="Removido dos favoritos.").open()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[FAV] Erro ao remover favorito: {e}")
     def _refresh_fav_statuses_worker(self, names: List[str], job_id: int):
         """Background worker: refresh online/offline status for favorites."""
         for name in names:
@@ -1022,41 +1120,43 @@ class TibiaToolsApp(MDApp):
 
             Clock.schedule_once(lambda *_dt, n=name, st=state: self._set_fav_item_status(n, st), 0)
             time.sleep(0.15)
-    def _fetch_character_online_state(self, name: str) -> str:
-        """Retorna 'online' ou 'offline' para um char (sem 'desconhecido').
 
-        Usa Tibiadata como fonte principal e Tibia.com como fallback.
+    def _fetch_character_online_state(self, name: str) -> str:
+        """Retorna 'online' ou 'offline' para um personagem.
+
+        Estratégia:
+        1) Tenta Tibiadata (rápido) e usa o status retornado.
+        2) Se vier offline, confirma no Tibia.com (às vezes o Tibiadata atrasa).
         """
-        name = (name or "").strip()
-        if not name:
+        safe_name = (name or "").strip()
+        if not safe_name:
             return "offline"
 
-        # 1) Tibiadata (principal)
-        for _ in range(2):
+        # 1) Tibiadata
+        world = ""
+        status_raw = ""
+        try:
+            data = fetch_character_tibiadata(safe_name, timeout=12) or {}
+            character = data.get("character") or {}
+            world = str(character.get("world") or "").strip()
+            status_raw = str(character.get("status") or "").strip().lower()
+            if status_raw == "online":
+                return "online"
+        except Exception:
+            # se falhar, cai pro fallback
+            world = ""
+            status_raw = ""
+
+        # 2) Confirma no Tibia.com (precisa do world)
+        if world:
             try:
-                res = api.is_character_online_tibiadata(name, timeout=12)
-                if res is True:
+                if is_character_online_tibia_com(safe_name, world, timeout=12):
                     return "online"
-                if res is False:
-                    return "offline"
             except Exception:
                 pass
-            time.sleep(0.2)
 
-        # 2) Tibia.com (fallback)
-        for _ in range(2):
-            try:
-                res = api.is_character_online_tibia_com(name, timeout=12)
-                if res is True:
-                    return "online"
-                if res is False:
-                    return "offline"
-            except Exception:
-                pass
-            time.sleep(0.2)
-
+        # padrão: offline
         return "offline"
-
     def _fav_actions(self, name: str, caller=None):
         """Mostra opções para um favorito.
 
