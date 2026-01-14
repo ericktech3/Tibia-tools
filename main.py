@@ -978,7 +978,7 @@ class TibiaToolsApp(MDApp):
         names_to_check: list[str] = []
         names = list(self.favorites)
         for name in names:
-            state = None if force else self._get_cached_fav_status(name)
+            state = self._get_cached_fav_status(name)
             secondary, color = self._fav_status_presentation(state)
 
             item = TwoLineIconListItem(text=name, secondary_text=secondary)
@@ -1121,125 +1121,126 @@ class TibiaToolsApp(MDApp):
         except Exception as e:
             print(f"[FAV] Erro ao remover favorito: {e}")
     def _refresh_fav_statuses_worker(self, names: List[str], job_id: int):
-        """Background worker: refresh online/offline status for favorites."""
-        for name in names:
-            # If user refreshed the list again, stop this job.
-            if job_id != self._fav_status_job_id:
-                return
+        """Worker de atualização de status dos favoritos.
 
-            state = self._fetch_character_online_state(name)
-            key = f"fav_status:{(name or '').strip().lower()}"
-            try:
-                self._cache_set(key, state)
-            except Exception:
-                pass
+        Faz as chamadas de rede em background e atualiza a UI via Clock.
+        """
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+        except Exception:
+            ThreadPoolExecutor = None
+            as_completed = None
 
-            Clock.schedule_once(lambda *_dt, n=name, st=state: self._set_fav_item_status(n, st), 0)
-            time.sleep(0.15)
+        try:
+            if ThreadPoolExecutor and as_completed:
+                max_workers = min(6, max(1, len(names)))
+                with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                    fut_map = {ex.submit(self._fetch_character_online_state, n): n for n in names}
+                    for fut in as_completed(fut_map):
+                        n = fut_map[fut]
+                        try:
+                            status = fut.result()
+                        except Exception:
+                            status = None
+                        if status is None:
+                            continue
+                        Clock.schedule_once(lambda dt, nn=n, st=status: self._set_fav_item_status(nn, st), 0)
+            else:
+                # Fallback sequencial
+                for n in names:
+                    status = self._fetch_character_online_state(n)
+                    if status is None:
+                        continue
+                    Clock.schedule_once(lambda dt, nn=n, st=status: self._set_fav_item_status(nn, st), 0)
+        finally:
+            def _finish(_dt):
+                self._fav_refreshing = False
+            Clock.schedule_once(_finish, 0)
 
     def _fetch_character_online_state(self, name: str) -> str:
-        """Retorna 'online' ou 'offline' para um personagem.
+        """Retorna 'online'/'offline'/None.
 
-        Para evitar o "offline" falso, priorizamos o status da página do personagem
-        no tibia.com (quando disponível) e só usamos TibiaData como fallback.
+        Para reduzir a demora no refresh, priorizamos Tibiadata (/v4/character) e só usamos
+        tibia.com como fallback quando a API falhar.
         """
-
-        safe_name = (name or "").strip()
-        if not safe_name:
-            return "offline"
-
-        # 1) tibia.com (mais confiável: a própria página do char tem "Status: online/offline")
         try:
-            web_state = is_character_online_tibia_com(safe_name, "", timeout=12)
-            if web_state is True:
-                return "online"
-            if web_state is False:
-                return "offline"
-        except Exception:
-            pass
+            online = is_character_online_tibiadata(name, timeout=8)  # world=None -> /v4/character
+            if online is not None:
+                return "online" if online else "offline"
 
-        # 2) TibiaData (/v4/character)
-        try:
-            data = fetch_character_tibiadata(safe_name, timeout=12) or {}
-            block = data.get("character", {}) if isinstance(data, dict) else {}
+            # fallback (mais lento)
+            online2 = is_character_online_tibia_com(name, world="", timeout=10)
+            if online2 is not None:
+                return "online" if online2 else "offline"
 
-            # Estrutura pode ser {"character": {"character": {...}}}.
-            character = {}
-            if isinstance(block, dict):
-                if isinstance(block.get("character"), dict):
-                    character = block.get("character") or {}
-                else:
-                    character = block
+            return None
+        except Exception as e:
+            logging.exception(f"Erro ao checar status online de '{name}': {e}")
+            return None
 
-            status_raw = str(character.get("status") or "").strip().lower()
-            if status_raw == "online":
-                return "online"
-
-            # fallback extra: lista de online do world (quando world existir)
-            world = str(character.get("world") or "").strip()
-            if world and world.upper() not in ("N/A", "UNKNOWN"):
-                try:
-                    if is_character_online_tibiadata(safe_name, world, timeout=12) is True:
-                        return "online"
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        return "offline"
     def _fav_actions(self, name: str, caller=None):
-        """Mostra opções para um favorito sem fechar o app.
+        """Menu de ações para um favorito.
 
-        Aqui usamos um diálogo simples (MDDialog) porque:
-        - não corta texto em telas pequenas
-        - evita callbacks apontando para métodos inexistentes
+        Em algumas versões do KivyMD, usar MDDialog(type="simple", items=[OneLineListItem...])
+        pode causar crash (KeyError: _left_container). Para evitar isso, usamos MDDropdownMenu.
         """
-        name = (name or "").strip()
-        if not name:
-            return
-
-        # Fecha qualquer diálogo anterior
         try:
-            if getattr(self, "_fav_dialog", None):
-                self._fav_dialog.dismiss()
-        except Exception:
-            pass
-        self._fav_dialog = None
+            if caller is None:
+                caller = self.root
 
-        def _close_and(fn):
-            def _inner(*_):
+            # Fecha menu anterior, se existir
+            if getattr(self, "_fav_menu", None):
                 try:
-                    if getattr(self, "_fav_dialog", None):
-                        self._fav_dialog.dismiss()
+                    self._fav_menu.dismiss()
                 except Exception:
                     pass
-                self._fav_dialog = None
-                try:
-                    fn()
-                except Exception:
-                    pass
+                self._fav_menu = None
 
-            return _inner
+            def _wrap(fn):
+                def _inner(*_args):
+                    self._dismiss_fav_menu()
+                    try:
+                        fn()
+                    except Exception as e:
+                        self.show_snackbar(f"Erro: {e}")
+                return _inner
 
-        def _copy():
-            try:
-                Clipboard.copy(name)
-                self.toast("Nome copiado!")
-            except Exception:
-                pass
+            menu_items = [
+                {
+                    "viewclass": "OneLineListItem",
+                    "text": "Ver no app",
+                    "height": dp(48),
+                    "on_release": _wrap(lambda: self._open_fav_in_app(name)),
+                },
+                {
+                    "viewclass": "OneLineListItem",
+                    "text": "Abrir no site",
+                    "height": dp(48),
+                    "on_release": _wrap(lambda: self._open_fav_on_site(name)),
+                },
+                {
+                    "viewclass": "OneLineListItem",
+                    "text": "Copiar nome",
+                    "height": dp(48),
+                    "on_release": _wrap(lambda: self._copy_fav_name(name)),
+                },
+                {
+                    "viewclass": "OneLineListItem",
+                    "text": "Remover dos favoritos",
+                    "height": dp(48),
+                    "on_release": _wrap(lambda: self._remove_favorite(name)),
+                },
+            ]
 
-        dialog = MDDialog(
-            title=name,
-            type="simple",
-            items=[
-                OneLineListItem(text="Ver no app", on_release=_close_and(lambda: self._open_fav_in_app(name))),
-                OneLineListItem(text="Abrir no site", on_release=_close_and(lambda: self._open_fav_on_site(name))),
-                OneLineListItem(text="Copiar nome", on_release=_close_and(_copy)),
-                OneLineListItem(text="Remover dos favoritos", on_release=_close_and(lambda: self._remove_favorite(name))),
-            ],
-        )
-        self._fav_dialog = dialog
-        dialog.open()
+            self._fav_menu = MDDropdownMenu(
+                caller=caller,
+                items=menu_items,
+                width_mult=4,
+                max_height=dp(240),
+            )
+            self._fav_menu.open()
+        except Exception as e:
+            self.show_snackbar(f"Erro ao abrir opções: {e}")
 
     def calc_shared_xp(self):
         home = self.root.get_screen("home")
