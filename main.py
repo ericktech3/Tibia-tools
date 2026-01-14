@@ -32,9 +32,13 @@ from kivy.uix.screenmanager import ScreenManager
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
-from kivymd.uix.list import OneLineIconListItem, TwoLineIconListItem, IconLeftWidget
+from kivymd.uix.list import (
+    OneLineIconListItem,
+    OneLineListItem,
+    TwoLineIconListItem,
+    IconLeftWidget,
+)
 from kivymd.uix.menu import MDDropdownMenu
-from kivymd.uix.bottomsheet import MDListBottomSheet
 
 # ---- IMPORTS DO CORE (com proteção para não “fechar sozinho” no Android) ----
 _CORE_IMPORT_ERROR = None
@@ -699,7 +703,8 @@ class TibiaToolsApp(MDApp):
                     item.bind(on_release=lambda *_: self._show_text_dialog(dialog_title or "Detalhes", dialog_text))
                 dl.add_widget(item)
 
-            add_one(f"Status: {status}", status_icon)
+            # Usuário pediu para mostrar apenas ONLINE/OFFLINE (sem "Status:")
+            add_one((st if st in ("online", "offline") else "offline").capitalize(), status_icon)
             add_one(f"Vocation: {voc}", "account")
             add_one(f"Level: {level}", "signal")
             add_one(f"World: {world}", "earth")
@@ -803,19 +808,24 @@ class TibiaToolsApp(MDApp):
                 online_td = (
                     is_character_online_tibiadata(name, world)
                     if world and str(world).strip().upper() != "N/A"
-                    else api.is_character_online_tibiadata(name)
+                    else None
                 )
 
                 online_web = None
-                if online_td is not True:
+                if (online_td is None or online_td is False) and world and str(world).strip().upper() != "N/A":
                     online_web = is_character_online_tibia_com(name, world)
 
-                # No app mostramos somente ONLINE/OFFLINE.
-                # Considera ONLINE se qualquer fonte confirmar.
-                if status_raw == "online" or online_td is True or online_web is True:
+                # Regra anti-falso-negative:
+                # - ONLINE se qualquer fonte confirmar
+                # - OFFLINE apenas se TODAS as fontes consultadas confirmarem
+                # - senão, usamos o status bruto da TibiaData (pode ser "offline" quando está atrasado)
+                # B: se não der pra confirmar com segurança, mostramos UNKNOWN (evita falso OFF)
+                if online_td is True or online_web is True:
                     status = "online"
-                else:
+                elif online_td is False and online_web is False:
                     status = "offline"
+                else:
+                    status = "unknown"
 
                 guild = character.get("guild") or {}
                 guild_name = ""
@@ -1014,19 +1024,32 @@ class TibiaToolsApp(MDApp):
             time.sleep(0.15)
 
     def _fetch_character_online_state(self, name: str) -> str:
-        # Sempre retorna "online" ou "offline" (sem "desconhecido")
-        try:
-            res = api.is_character_online_tibiadata(name, timeout=8)
-            if res is True:
-                return "online"
-            if res is False:
-                return "offline"
-        except Exception:
-            pass
+        """Busca o status do personagem e sempre retorna 'online' ou 'offline'.
 
-        # Fallback: tibia.com (scraping simples)
+        Observação: Favoritos roda em background; em redes móveis/Android o tempo
+        de resposta pode variar bastante. Por isso usamos timeout maior e retry.
+        """
+
+        # 1) Fonte principal: TibiaData (mesma usada na aba Char)
+        for _attempt in range(2):
+            try:
+                data = api.fetch_character_tibiadata(name, timeout=12)
+                if data:
+                    status = (
+                        data.get("character", {})
+                        .get("character", {})
+                        .get("status", "")
+                    )
+                    status = (status or "").strip().lower()
+                    if status in ("online", "offline"):
+                        return status
+            except Exception:
+                pass
+            time.sleep(0.3)
+
+        # 2) Fallback: tibia.com (scraping simples)
         try:
-            res2 = api.is_character_online_tibia_com(name, timeout=8)
+            res2 = api.is_character_online_tibia_com(name, timeout=12)
             if res2 is True:
                 return "online"
             if res2 is False:
@@ -1046,35 +1069,54 @@ class TibiaToolsApp(MDApp):
         item.secondary_text_color = color
 
     def _fav_actions(self, name: str):
-        # BottomSheet evita cortar botões em telas pequenas
-        bs = MDListBottomSheet()
+        """Ações do favorito (lista no diálogo pra não cortar em telas pequenas)."""
+        name = (name or "").strip()
+        if not name:
+            return
+
+        dialog = None
+
+        def close_dialog(*_):
+            if dialog:
+                dialog.dismiss()
 
         def view_in_app(*_):
-            try:
-                bs.dismiss()
-            except Exception:
-                pass
-            self.open_char_in_app(name)
+            close_dialog()
+            # Ir para Home e abrir a aba Char
+            self.select_home_tab("tab_char")
+            home = self.root.get_screen("home")
+            home.ids.char_name.text = name
+            self.search_character()
 
         def open_in_site(*_):
-            try:
-                bs.dismiss()
-            except Exception:
-                pass
+            close_dialog()
             url = f"https://www.tibia.com/community/?subtopic=characters&name={urllib.parse.quote(name)}"
             webbrowser.open(url)
 
-        def remove(*_):
+        def copy_name(*_):
+            close_dialog()
             try:
-                bs.dismiss()
+                Clipboard.copy(name)
+                Snackbar(text="Nome copiado").open()
             except Exception:
                 pass
+
+        def remove(*_):
+            close_dialog()
             self.remove_favorite(name)
 
-        bs.add_item("Ver no app", view_in_app, icon="account-search")
-        bs.add_item("Abrir no site", open_in_site, icon="open-in-new")
-        bs.add_item("Remover", remove, icon="delete")
-        bs.open()
+        dialog = MDDialog(
+            title=name,
+            type="simple",
+            items=[
+                OneLineListItem(text="Ver no app", on_release=view_in_app),
+                OneLineListItem(text="Abrir no site", on_release=open_in_site),
+                OneLineListItem(text="Copiar nome", on_release=copy_name),
+                OneLineListItem(text="Remover", on_release=remove),
+            ],
+            buttons=[MDFlatButton(text="FECHAR", on_release=close_dialog)],
+        )
+        dialog.open()
 
     def calc_shared_xp(self):
         home = self.root.get_screen("home")
