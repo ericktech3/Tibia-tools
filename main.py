@@ -982,7 +982,7 @@ class TibiaToolsApp(MDApp):
             item.add_widget(IconLeftWidget(icon="account"))
             item.secondary_theme_text_color = "Custom"
             item.secondary_text_color = color
-            item.bind(on_release=lambda _item, n=name: self._fav_actions(n))
+            item.bind(on_release=lambda _item, n=name: self._fav_actions(n, _item))
 
             self._fav_items[name.strip().lower()] = item
             container.add_widget(item)
@@ -1022,101 +1022,114 @@ class TibiaToolsApp(MDApp):
 
             Clock.schedule_once(lambda *_dt, n=name, st=state: self._set_fav_item_status(n, st), 0)
             time.sleep(0.15)
-
     def _fetch_character_online_state(self, name: str) -> str:
-        """Busca o status do personagem e sempre retorna 'online' ou 'offline'.
+        """Retorna 'online' ou 'offline' para um char (sem 'desconhecido').
 
-        Observação: Favoritos roda em background; em redes móveis/Android o tempo
-        de resposta pode variar bastante. Por isso usamos timeout maior e retry.
+        Usa Tibiadata como fonte principal e Tibia.com como fallback.
         """
+        name = (name or "").strip()
+        if not name:
+            return "offline"
 
-        # 1) Fonte principal: TibiaData (mesma usada na aba Char)
-        for _attempt in range(2):
+        # 1) Tibiadata (principal)
+        for _ in range(2):
             try:
-                data = api.fetch_character_tibiadata(name, timeout=12)
-                if data:
-                    status = (
-                        data.get("character", {})
-                        .get("character", {})
-                        .get("status", "")
-                    )
-                    status = (status or "").strip().lower()
-                    if status in ("online", "offline"):
-                        return status
+                res = api.is_character_online_tibiadata(name, timeout=12)
+                if res is True:
+                    return "online"
+                if res is False:
+                    return "offline"
             except Exception:
                 pass
-            time.sleep(0.3)
+            time.sleep(0.2)
 
-        # 2) Fallback: tibia.com (scraping simples)
-        try:
-            res2 = api.is_character_online_tibia_com(name, timeout=12)
-            if res2 is True:
-                return "online"
-            if res2 is False:
-                return "offline"
-        except Exception:
-            pass
+        # 2) Tibia.com (fallback)
+        for _ in range(2):
+            try:
+                res = api.is_character_online_tibia_com(name, timeout=12)
+                if res is True:
+                    return "online"
+                if res is False:
+                    return "offline"
+            except Exception:
+                pass
+            time.sleep(0.2)
 
         return "offline"
 
-    def _set_fav_item_status(self, name: str, state: str):
-        item = self._fav_items.get((name or "").strip().lower())
-        if not item:
-            return
-        secondary, color = self._fav_status_presentation(state)
-        item.secondary_text = secondary
-        item.secondary_theme_text_color = "Custom"
-        item.secondary_text_color = color
+    def _fav_actions(self, name: str, caller=None):
+        """Mostra opções para um favorito.
 
-    def _fav_actions(self, name: str):
-        """Ações do favorito (lista no diálogo pra não cortar em telas pequenas)."""
+        Preferimos menu (MDDropdownMenu) ancorado no item clicado para não cortar texto
+        e evitar crash de diálogo em alguns builds.
+        """
         name = (name or "").strip()
         if not name:
             return
 
-        dialog = None
+        # Fecha qualquer diálogo/menu anterior
+        try:
+            if getattr(self, "_fav_dialog", None):
+                self._fav_dialog.dismiss()
+        except Exception:
+            pass
+        self._fav_dialog = None
 
-        def close_dialog(*_):
-            if dialog:
-                dialog.dismiss()
+        try:
+            if getattr(self, "_fav_menu", None):
+                self._fav_menu.dismiss()
+        except Exception:
+            pass
+        self._fav_menu = None
 
-        def view_in_app(*_):
-            close_dialog()
-            # Ir para Home e abrir a aba Char
+        def dismiss_menu(*_):
+            if getattr(self, "_fav_menu", None):
+                try:
+                    self._fav_menu.dismiss()
+                except Exception:
+                    pass
+                self._fav_menu = None
+
+        def open_in_app(*_):
+            dismiss_menu()
             self.select_home_tab("tab_char")
-            home = self.root.get_screen("home")
-            home.ids.char_name.text = name
-            self.search_character()
+            Clock.schedule_once(lambda dt: self._fill_char_and_search(name), 0.2)
 
         def open_in_site(*_):
-            close_dialog()
-            url = f"https://www.tibia.com/community/?subtopic=characters&name={urllib.parse.quote(name)}"
-            webbrowser.open(url)
+            dismiss_menu()
+            self.open_in_browser(f"https://www.tibia.com/community/?name={quote(name)}")
 
         def copy_name(*_):
-            close_dialog()
-            try:
-                Clipboard.copy(name)
-                Snackbar(text="Nome copiado").open()
-            except Exception:
-                pass
+            dismiss_menu()
+            Clipboard.copy(name)
 
-        def remove(*_):
-            close_dialog()
+        def remove_fav(*_):
+            dismiss_menu()
             self.remove_favorite(name)
 
-        dialog = MDDialog(
-            title=name,
-            type="simple",
-            items=[
-                OneLineListItem(text="Ver no app", on_release=view_in_app),
-                OneLineListItem(text="Abrir no site", on_release=open_in_site),
-                OneLineListItem(text="Copiar nome", on_release=copy_name),
-                OneLineListItem(text="Remover", on_release=remove),
-            ],
-            buttons=[MDFlatButton(text="FECHAR", on_release=close_dialog)],
-        )
-        dialog.open()
+        items = [
+            {"text": "Ver no app", "on_release": open_in_app},
+            {"text": "Abrir no site", "on_release": open_in_site},
+            {"text": "Copiar nome", "on_release": copy_name},
+            {"text": "Remover", "on_release": remove_fav},
+            {"text": "Fechar", "on_release": dismiss_menu},
+        ]
+
+        # Se não vier o widget caller, caímos em um diálogo simples (fallback)
+        if caller is None:
+            dialog = MDDialog(
+                title=name,
+                type="simple",
+                items=[
+                    OneLineListItem(text=i["text"], on_release=i["on_release"]) for i in items
+                ],
+            )
+            self._fav_dialog = dialog
+            dialog.open()
+            return
+
+        self._fav_menu = MDDropdownMenu(caller=caller, items=items, width_mult=4)
+        self._fav_menu.open()
 
     def calc_shared_xp(self):
         home = self.root.get_screen("home")
