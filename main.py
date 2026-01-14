@@ -978,7 +978,7 @@ class TibiaToolsApp(MDApp):
         names_to_check: list[str] = []
         names = list(self.favorites)
         for name in names:
-            state = self._get_cached_fav_status(name)
+            state = None if force else self._get_cached_fav_status(name)
             secondary, color = self._fav_status_presentation(state)
 
             item = TwoLineIconListItem(text=name, secondary_text=secondary)
@@ -990,7 +990,7 @@ class TibiaToolsApp(MDApp):
             self._fav_items[name.strip().lower()] = item
             container.add_widget(item)
 
-            if force or state is None:
+            if force or state is None or str(state).strip().lower() != "online":
                 names_to_check.append(name)
 
         if not silent and force:
@@ -1016,11 +1016,12 @@ class TibiaToolsApp(MDApp):
         return None
 
     def _fav_status_presentation(self, state) -> tuple[str, tuple]:
-        # Sem "desconhecido" / "verificando": sempre Online ou Offline
         s = str(state).strip().lower() if state is not None else ""
         if s == "online" or state is True:
             return "Online", (0.2, 0.75, 0.35, 1)
-        return "Offline", (0.95, 0.3, 0.3, 1)
+        if s == "offline" or state is False:
+            return "Offline", (0.95, 0.3, 0.3, 1)
+        return "Atualizando...", (0.7, 0.7, 0.7, 1)
 
 
     def _set_fav_item_status(self, name: str, state) -> None:
@@ -1133,7 +1134,7 @@ class TibiaToolsApp(MDApp):
 
         try:
             if ThreadPoolExecutor and as_completed:
-                max_workers = min(6, max(1, len(names)))
+                max_workers = min(3, max(1, len(names)))
                 with ThreadPoolExecutor(max_workers=max_workers) as ex:
                     fut_map = {ex.submit(self._fetch_character_online_state, n): n for n in names}
                     for fut in as_completed(fut_map):
@@ -1156,27 +1157,38 @@ class TibiaToolsApp(MDApp):
             def _finish(_dt):
                 self._fav_refreshing = False
             Clock.schedule_once(_finish, 0)
-
     def _fetch_character_online_state(self, name: str) -> str:
-        """Retorna 'online'/'offline'/None.
+        """Retorna o estado online do personagem.
 
-        Para reduzir a demora no refresh, priorizamos Tibiadata (/v4/character) e só usamos
-        tibia.com como fallback quando a API falhar.
+        Nota: o TibiaData pode atrasar (principalmente OFF->ON). Para evitar falso OFF:
+          1) TibiaData como fast path (se retornar ON, já serve).
+          2) Confirmação via tibia.com quando TibiaData não diz ON.
+          3) Se tibia.com falhar, voltamos para o valor do TibiaData (se existir).
         """
+        # 1) Fast path via TibiaData (geralmente rápido)
+        td = None
         try:
-            online = is_character_online_tibiadata(name, timeout=8)  # world=None -> /v4/character
-            if online is not None:
-                return "online" if online else "offline"
+            td = is_character_online_tibiadata(name, timeout=2.8)
+        except Exception:
+            td = None
 
-            # fallback (mais lento)
-            online2 = is_character_online_tibia_com(name, world="", timeout=10)
-            if online2 is not None:
-                return "online" if online2 else "offline"
+        if td is True:
+            return "online"
 
-            return None
-        except Exception as e:
-            logging.exception(f"Erro ao checar status online de '{name}': {e}")
-            return None
+        # 2) Confirmação/autoridade via tibia.com (evita falso OFF)
+        try:
+            tc = is_character_online_tibia_com(name, world="", timeout=6)
+            if tc is not None:
+                return "online" if tc else "offline"
+        except Exception:
+            tc = None
+
+        # 3) Fallback para TibiaData (se tivermos algo)
+        if td is not None:
+            return "online" if td else "offline"
+
+        return None
+
 
     def _fav_actions(self, name: str, caller=None):
         """Menu de ações para um favorito.
