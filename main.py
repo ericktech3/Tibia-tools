@@ -978,7 +978,11 @@ class TibiaToolsApp(MDApp):
         names_to_check: list[str] = []
         names = list(self.favorites)
         for name in names:
-            state = None if force else self._get_cached_fav_status(name)
+            if force:
+                state, _ = self._get_cached_fav_status(name)
+                needs_refresh = True
+            else:
+                state, needs_refresh = self._get_cached_fav_status(name)
             secondary, color = self._fav_status_presentation(state)
 
             item = TwoLineIconListItem(text=name, secondary_text=secondary)
@@ -990,7 +994,7 @@ class TibiaToolsApp(MDApp):
             self._fav_items[name.strip().lower()] = item
             container.add_widget(item)
 
-            if force or state is None or str(state).strip().lower() != "online":
+            if needs_refresh:
                 names_to_check.append(name)
 
         if not silent and force:
@@ -1006,14 +1010,48 @@ class TibiaToolsApp(MDApp):
                 daemon=True,
             ).start()
 
-    def _get_cached_fav_status(self, name: str) -> Optional[str]:
+    def _get_cached_fav_status(self, name: str) -> tuple[Optional[str], bool]:
+        """Retorna (estado, precisa_atualizar) para um favorito.
+
+        - estado: "online" | "offline" | None
+        - precisa_atualizar: True se devemos buscar estado novo em background
+
+        Mantém compatibilidade com caches antigos (value como dict/bool/str).
+        """
         key = f"fav_status:{(name or '').strip().lower()}"
-        cached = self._cache_get(key, ttl_seconds=25)
-        if isinstance(cached, dict):
-            return cached.get("state")
-        if isinstance(cached, str):
-            return cached
-        return None
+        try:
+            item = self.cache.get(key)
+            if not isinstance(item, dict):
+                return None, True
+
+            ts = item.get('ts')
+            val = item.get('value')
+
+            # Compat: versões antigas guardavam dict {'state': ...} ou bool.
+            if isinstance(val, dict):
+                val = val.get('state') or val.get('value')
+            if isinstance(val, bool):
+                val = 'online' if val else 'offline'
+
+            if not isinstance(val, str):
+                return None, True
+            state = val.strip().lower()
+            if state not in ('online', 'offline'):
+                return None, True
+
+            # Se não temos timestamp válido, exibimos o estado e pedimos refresh.
+            if not ts:
+                return state, True
+            try:
+                dt = datetime.fromisoformat(ts)
+                age = (datetime.utcnow() - dt).total_seconds()
+            except Exception:
+                return state, True
+
+            ttl = 120 if state == 'online' else 60
+            return state, age > ttl
+        except Exception:
+            return None, True
 
     def _fav_status_presentation(self, state) -> tuple[str, tuple]:
         s = str(state).strip().lower() if state is not None else ""
@@ -1168,7 +1206,7 @@ class TibiaToolsApp(MDApp):
         # 1) Fast path via TibiaData (geralmente rápido)
         td = None
         try:
-            td = is_character_online_tibiadata(name, timeout=2.8)
+            td = is_character_online_tibiadata(name, timeout=6)
         except Exception:
             td = None
 
@@ -1177,7 +1215,7 @@ class TibiaToolsApp(MDApp):
 
         # 2) Confirmação/autoridade via tibia.com (evita falso OFF)
         try:
-            tc = is_character_online_tibia_com(name, world="", timeout=6)
+            tc = is_character_online_tibia_com(name, world="", timeout=8)
             if tc is not None:
                 return "online" if tc else "offline"
         except Exception:
