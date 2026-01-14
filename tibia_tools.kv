@@ -339,6 +339,21 @@ RootSM:
                     padding: dp(8)
                     spacing: dp(8)
 
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(44)
+                        spacing: dp(8)
+
+                        MDLabel:
+                            text: "[b]Favoritos[/b]"
+                            markup: True
+                            valign: "middle"
+
+                        MDIconButton:
+                            icon: "refresh"
+                            on_release: app.refresh_favorites_list(force=True)
+
                     MDLabel:
                         text: "Toque em um favorito para opções."
                         size_hint_y: None

@@ -98,6 +98,7 @@ class TibiaToolsApp(MDApp):
         # Favorites (chars) UI/status helpers
         self._fav_items = {}  # lower(char_name) -> list item
         self._fav_status_job_id = 0
+        self._fav_refresh_event = None
 
     def build(self):
         self.title = "Tibia Tools"
@@ -132,7 +133,13 @@ class TibiaToolsApp(MDApp):
             Clock.schedule_once(lambda *_: self._set_initial_home_tab(), 0)
             Clock.schedule_once(lambda *_: self.dashboard_refresh(), 0)
 
-            Clock.schedule_once(lambda *_: self.refresh_favorites_list(), 0)
+            Clock.schedule_once(lambda *_: self.refresh_favorites_list(silent=True), 0)
+            # Auto-atualização do status dos favoritos (não faz sentido ficar "travado")
+            if self._fav_refresh_event is None:
+                self._fav_refresh_event = Clock.schedule_interval(
+                    lambda dt: self.refresh_favorites_list(silent=True),
+                    30,
+                )
             Clock.schedule_once(lambda *_: self.update_boosted(), 0)
 
         return root
@@ -800,32 +807,27 @@ class TibiaToolsApp(MDApp):
                 level = character.get("level", "N/A")
                 world = character.get("world", "N/A")
 
-                # Status: a API /v4/character pode ficar "atrasada".
-                # Primeiro: tenta lista de online via TibiaData (/v4/world/{world}).
-                # Se falhar (ou disser OFFLINE), tenta fallback no site oficial (tibia.com).
+                # Status (sem "unknown")
+                # A /v4/character às vezes atrasa; o mais confiável é o status na página do tibia.com.
                 status_raw = str(character.get("status") or "").strip().lower()
 
-                online_td = (
-                    is_character_online_tibiadata(name, world)
-                    if world and str(world).strip().upper() != "N/A"
-                    else None
-                )
-
-                online_web = None
-                if (online_td is None or online_td is False) and world and str(world).strip().upper() != "N/A":
-                    online_web = is_character_online_tibia_com(name, world)
-
-                # Regra anti-falso-negative:
-                # - ONLINE se qualquer fonte confirmar
-                # - OFFLINE apenas se TODAS as fontes consultadas confirmarem
-                # - senão, usamos o status bruto da TibiaData (pode ser "offline" quando está atrasado)
-                # B: se não der pra confirmar com segurança, mostramos UNKNOWN (evita falso OFF)
-                if online_td is True or online_web is True:
+                # 1) tenta tibia.com (não depende de world)
+                online_web = is_character_online_tibia_com(name, world or "")
+                if online_web is True:
                     status = "online"
-                elif online_td is False and online_web is False:
+                elif online_web is False:
                     status = "offline"
                 else:
-                    status = "unknown"
+                    # 2) fallback TibiaData
+                    online_td = (
+                        is_character_online_tibiadata(name, world)
+                        if world and str(world).strip().upper() != "N/A"
+                        else None
+                    )
+                    if online_td is True:
+                        status = "online"
+                    else:
+                        status = "online" if status_raw == "online" else "offline"
 
                 guild = character.get("guild") or {}
                 guild_name = ""
@@ -956,7 +958,7 @@ class TibiaToolsApp(MDApp):
     # --------------------
     # Favorites tab
     # --------------------
-    def refresh_favorites_list(self):
+    def refresh_favorites_list(self, silent: bool = False, force: bool = False):
         home = self.root.get_screen("home")
         container = home.ids.fav_list
         container.clear_widgets()
@@ -973,9 +975,10 @@ class TibiaToolsApp(MDApp):
             return
 
         # Render quickly with cached status (if available), then refresh in background.
+        names_to_check: list[str] = []
         names = list(self.favorites)
         for name in names:
-            state = self._get_cached_fav_status(name)
+            state = None if force else self._get_cached_fav_status(name)
             secondary, color = self._fav_status_presentation(state)
 
             item = TwoLineIconListItem(text=name, secondary_text=secondary)
@@ -987,15 +990,25 @@ class TibiaToolsApp(MDApp):
             self._fav_items[name.strip().lower()] = item
             container.add_widget(item)
 
-        threading.Thread(
-            target=self._refresh_fav_statuses_worker,
-            args=(names, job_id),
-            daemon=True,
-        ).start()
+            if force or state is None:
+                names_to_check.append(name)
+
+        if not silent and force:
+            try:
+                Snackbar(text="Atualizando favoritos...").open()
+            except Exception:
+                pass
+
+        if names_to_check:
+            threading.Thread(
+                target=self._refresh_fav_statuses_worker,
+                args=(names_to_check, job_id),
+                daemon=True,
+            ).start()
 
     def _get_cached_fav_status(self, name: str) -> Optional[str]:
         key = f"fav_status:{(name or '').strip().lower()}"
-        cached = self._cache_get(key, ttl_seconds=180)
+        cached = self._cache_get(key, ttl_seconds=25)
         if isinstance(cached, dict):
             return cached.get("state")
         if isinstance(cached, str):
@@ -1116,7 +1129,10 @@ class TibiaToolsApp(MDApp):
 
             state = self._fetch_character_online_state(name)
             key = f"fav_status:{(name or '').strip().lower()}"
-            self._cache_set(key, {"state": state})
+            try:
+                self._cache_set(key, state)
+            except Exception:
+                pass
 
             Clock.schedule_once(lambda *_dt, n=name, st=state: self._set_fav_item_status(n, st), 0)
             time.sleep(0.15)
@@ -1124,50 +1140,65 @@ class TibiaToolsApp(MDApp):
     def _fetch_character_online_state(self, name: str) -> str:
         """Retorna 'online' ou 'offline' para um personagem.
 
-        Estratégia:
-        1) Tenta Tibiadata (rápido) e usa o status retornado.
-        2) Se vier offline, confirma no Tibia.com (às vezes o Tibiadata atrasa).
+        Para evitar o "offline" falso, priorizamos o status da página do personagem
+        no tibia.com (quando disponível) e só usamos TibiaData como fallback.
         """
+
         safe_name = (name or "").strip()
         if not safe_name:
             return "offline"
 
-        # 1) Tibiadata
-        world = ""
-        status_raw = ""
+        # 1) tibia.com (mais confiável: a própria página do char tem "Status: online/offline")
+        try:
+            web_state = is_character_online_tibia_com(safe_name, "", timeout=12)
+            if web_state is True:
+                return "online"
+            if web_state is False:
+                return "offline"
+        except Exception:
+            pass
+
+        # 2) TibiaData (/v4/character)
         try:
             data = fetch_character_tibiadata(safe_name, timeout=12) or {}
-            character = data.get("character") or {}
-            world = str(character.get("world") or "").strip()
+            block = data.get("character", {}) if isinstance(data, dict) else {}
+
+            # Estrutura pode ser {"character": {"character": {...}}}.
+            character = {}
+            if isinstance(block, dict):
+                if isinstance(block.get("character"), dict):
+                    character = block.get("character") or {}
+                else:
+                    character = block
+
             status_raw = str(character.get("status") or "").strip().lower()
             if status_raw == "online":
                 return "online"
+
+            # fallback extra: lista de online do world (quando world existir)
+            world = str(character.get("world") or "").strip()
+            if world and world.upper() not in ("N/A", "UNKNOWN"):
+                try:
+                    if is_character_online_tibiadata(safe_name, world, timeout=12) is True:
+                        return "online"
+                except Exception:
+                    pass
         except Exception:
-            # se falhar, cai pro fallback
-            world = ""
-            status_raw = ""
+            pass
 
-        # 2) Confirma no Tibia.com (precisa do world)
-        if world:
-            try:
-                if is_character_online_tibia_com(safe_name, world, timeout=12):
-                    return "online"
-            except Exception:
-                pass
-
-        # padrão: offline
         return "offline"
     def _fav_actions(self, name: str, caller=None):
-        """Mostra opções para um favorito.
+        """Mostra opções para um favorito sem fechar o app.
 
-        Preferimos menu (MDDropdownMenu) ancorado no item clicado para não cortar texto
-        e evitar crash de diálogo em alguns builds.
+        Aqui usamos um diálogo simples (MDDialog) porque:
+        - não corta texto em telas pequenas
+        - evita callbacks apontando para métodos inexistentes
         """
         name = (name or "").strip()
         if not name:
             return
 
-        # Fecha qualquer diálogo/menu anterior
+        # Fecha qualquer diálogo anterior
         try:
             if getattr(self, "_fav_dialog", None):
                 self._fav_dialog.dismiss()
@@ -1175,61 +1206,40 @@ class TibiaToolsApp(MDApp):
             pass
         self._fav_dialog = None
 
-        try:
-            if getattr(self, "_fav_menu", None):
-                self._fav_menu.dismiss()
-        except Exception:
-            pass
-        self._fav_menu = None
-
-        def dismiss_menu(*_):
-            if getattr(self, "_fav_menu", None):
+        def _close_and(fn):
+            def _inner(*_):
                 try:
-                    self._fav_menu.dismiss()
+                    if getattr(self, "_fav_dialog", None):
+                        self._fav_dialog.dismiss()
                 except Exception:
                     pass
-                self._fav_menu = None
+                self._fav_dialog = None
+                try:
+                    fn()
+                except Exception:
+                    pass
 
-        def open_in_app(*_):
-            dismiss_menu()
-            self.select_home_tab("tab_char")
-            Clock.schedule_once(lambda dt: self._fill_char_and_search(name), 0.2)
+            return _inner
 
-        def open_in_site(*_):
-            dismiss_menu()
-            self.open_in_browser(f"https://www.tibia.com/community/?name={quote(name)}")
+        def _copy():
+            try:
+                Clipboard.copy(name)
+                self.toast("Nome copiado!")
+            except Exception:
+                pass
 
-        def copy_name(*_):
-            dismiss_menu()
-            Clipboard.copy(name)
-
-        def remove_fav(*_):
-            dismiss_menu()
-            self.remove_favorite(name)
-
-        items = [
-            {"text": "Ver no app", "on_release": open_in_app},
-            {"text": "Abrir no site", "on_release": open_in_site},
-            {"text": "Copiar nome", "on_release": copy_name},
-            {"text": "Remover", "on_release": remove_fav},
-            {"text": "Fechar", "on_release": dismiss_menu},
-        ]
-
-        # Se não vier o widget caller, caímos em um diálogo simples (fallback)
-        if caller is None:
-            dialog = MDDialog(
-                title=name,
-                type="simple",
-                items=[
-                    OneLineListItem(text=i["text"], on_release=i["on_release"]) for i in items
-                ],
-            )
-            self._fav_dialog = dialog
-            dialog.open()
-            return
-
-        self._fav_menu = MDDropdownMenu(caller=caller, items=items, width_mult=4)
-        self._fav_menu.open()
+        dialog = MDDialog(
+            title=name,
+            type="simple",
+            items=[
+                OneLineListItem(text="Ver no app", on_release=_close_and(lambda: self._open_fav_in_app(name))),
+                OneLineListItem(text="Abrir no site", on_release=_close_and(lambda: self._open_fav_on_site(name))),
+                OneLineListItem(text="Copiar nome", on_release=_close_and(_copy)),
+                OneLineListItem(text="Remover dos favoritos", on_release=_close_and(lambda: self._remove_favorite(name))),
+            ],
+        )
+        self._fav_dialog = dialog
+        dialog.open()
 
     def calc_shared_xp(self):
         home = self.root.get_screen("home")
