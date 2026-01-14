@@ -114,15 +114,29 @@ def is_character_online_tibiadata(name: str, world: Optional[str] = None, timeou
                 if isinstance(char_block, dict):
                     inner = char_block.get("character") if isinstance(char_block.get("character"), dict) else char_block
                     if isinstance(inner, dict):
+                        # Tenta achar algum campo de status/online
                         status = inner.get("status") or inner.get("state") or inner.get("online_status")
+                        # Alguns formatos podem ter boolean
+                        for k in ("is_online", "online"):
+                            v = inner.get(k)
+                            if isinstance(v, bool):
+                                return v
+                            if isinstance(v, str):
+                                sv = v.strip().lower()
+                                if sv in ("true", "online", "yes"):
+                                    return True
+                                if sv in ("false", "offline", "no"):
+                                    return False
+                if isinstance(status, bool):
+                    return status
             if isinstance(status, str):
                 st = status.strip().lower()
                 if st == "online":
                     return True
                 if st == "offline":
                     return False
-            # Sem status: assume offline (sem "desconhecido" na UI)
-            return False
+            # Sem status confiável: devolve None para permitir fallback (tibia.com)
+            return None
 
         # Com world: checa lista de online players do mundo
         safe_world = requests.utils.quote(str(world).strip())
@@ -136,7 +150,7 @@ def is_character_online_tibiadata(name: str, world: Optional[str] = None, timeou
             if isinstance(players, dict):
                 players = players.get("online_players") or players.get("players") or players.get("data")
         if not players or not isinstance(players, list):
-            return False
+            return None
 
         target = name.strip().lower()
         for p in players:

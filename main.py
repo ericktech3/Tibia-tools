@@ -803,24 +803,19 @@ class TibiaToolsApp(MDApp):
                 online_td = (
                     is_character_online_tibiadata(name, world)
                     if world and str(world).strip().upper() != "N/A"
-                    else None
+                    else api.is_character_online_tibiadata(name)
                 )
 
                 online_web = None
-                if (online_td is None or online_td is False) and world and str(world).strip().upper() != "N/A":
+                if online_td is not True:
                     online_web = is_character_online_tibia_com(name, world)
 
-                # Regra anti-falso-negative:
-                # - ONLINE se qualquer fonte confirmar
-                # - OFFLINE apenas se TODAS as fontes consultadas confirmarem
-                # - senão, usamos o status bruto da TibiaData (pode ser "offline" quando está atrasado)
-                # B: se não der pra confirmar com segurança, mostramos UNKNOWN (evita falso OFF)
-                if online_td is True or online_web is True:
+                # No app mostramos somente ONLINE/OFFLINE.
+                # Considera ONLINE se qualquer fonte confirmar.
+                if status_raw == "online" or online_td is True or online_web is True:
                     status = "online"
-                elif online_td is False and online_web is False:
-                    status = "offline"
                 else:
-                    status = "unknown"
+                    status = "offline"
 
                 guild = character.get("guild") or {}
                 guild_name = ""
@@ -1059,9 +1054,7 @@ class TibiaToolsApp(MDApp):
                 bs.dismiss()
             except Exception:
                 pass
-            self.root.current = "char"
-            self.char_name_input.text = name
-            self.search_character()
+            self.open_char_in_app(name)
 
         def open_in_site(*_):
             try:
