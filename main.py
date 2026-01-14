@@ -34,6 +34,7 @@ from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
 from kivymd.uix.list import OneLineIconListItem, TwoLineIconListItem, IconLeftWidget
 from kivymd.uix.menu import MDDropdownMenu
+from kivymd.uix.bottomsheet import MDListBottomSheet
 
 # ---- IMPORTS DO CORE (com proteção para não “fechar sozinho” no Android) ----
 _CORE_IMPORT_ERROR = None
@@ -673,7 +674,7 @@ class TibiaToolsApp(MDApp):
             badge = "[b][color=#e74c3c]OFFLINE[/color][/b]"
             status_icon = "wifi-off"
         else:
-            badge = "[b][color=#bdc3c7]UNKNOWN[/color][/b]"
+            badge = "[b][color=#e74c3c]OFFLINE[/color][/b]"
             status_icon = "help-circle-outline"
 
         # Layout novo (cards + listas)
@@ -996,16 +997,12 @@ class TibiaToolsApp(MDApp):
             return cached
         return None
 
-    def _fav_status_presentation(self, state: Optional[str]):
-        """Return (secondary_text, rgba_color) for a favorite status."""
-        s = (state or "").lower().strip()
-        if s == "online":
-            return "ONLINE", (0.2, 0.85, 0.2, 1)
-        if s == "offline":
-            return "OFFLINE", (0.95, 0.25, 0.25, 1)
-        if s == "unknown":
-            return "Status: desconhecido", (0.7, 0.7, 0.7, 1)
-        return "Verificando...", (0.7, 0.7, 0.7, 1)
+    def _fav_status_presentation(self, state) -> tuple[str, tuple]:
+        # Sem "desconhecido" / "verificando": sempre Online ou Offline
+        s = str(state).strip().lower() if state is not None else ""
+        if s == "online" or state is True:
+            return "Online", (0.2, 0.75, 0.35, 1)
+        return "Offline", (0.95, 0.3, 0.3, 1)
 
     def _refresh_fav_statuses_worker(self, names: List[str], job_id: int):
         """Background worker: refresh online/offline status for favorites."""
@@ -1022,22 +1019,27 @@ class TibiaToolsApp(MDApp):
             time.sleep(0.15)
 
     def _fetch_character_online_state(self, name: str) -> str:
-        """Best-effort: Tibia.com first, then Tibiadata. Returns online/offline/unknown."""
+        # Sempre retorna "online" ou "offline" (sem "desconhecido")
         try:
-            res = api.is_character_online_tibia_com(name, timeout=6)
-            if res is not None:
-                return "online" if res else "offline"
+            res = api.is_character_online_tibiadata(name, timeout=8)
+            if res is True:
+                return "online"
+            if res is False:
+                return "offline"
         except Exception:
             pass
 
+        # Fallback: tibia.com (scraping simples)
         try:
-            res = api.is_character_online_tibiadata(name, timeout=6)
-            if res is not None:
-                return "online" if res else "offline"
+            res2 = api.is_character_online_tibia_com(name, timeout=8)
+            if res2 is True:
+                return "online"
+            if res2 is False:
+                return "offline"
         except Exception:
             pass
 
-        return "unknown"
+        return "offline"
 
     def _set_fav_item_status(self, name: str, state: str):
         item = self._fav_items.get((name or "").strip().lower())
@@ -1049,49 +1051,38 @@ class TibiaToolsApp(MDApp):
         item.secondary_text_color = color
 
     def _fav_actions(self, name: str):
-        def remove(*_):
-            if name in self.favorites:
-                self.favorites.remove(name)
-                self.save_favorites()
-                self.refresh_favorites_list()
-                self.toast("Removido.")
-            dlg.dismiss()
+        # BottomSheet evita cortar botões em telas pequenas
+        bs = MDListBottomSheet()
 
         def view_in_app(*_):
-            # Go to Char tab and load the character in-app.
             try:
-                home = self.root.get_screen("home")
-                try:
-                    home.ids.bottom_nav.switch_tab("tab_char")
-                except Exception:
-                    # Fallback for older KivyMD versions
-                    home.ids.bottom_nav.current = "tab_char"
-                home.ids.char_name.text = name
+                bs.dismiss()
             except Exception:
                 pass
-            dlg.dismiss()
-            # Trigger a search (uses the char_name field)
+            self.root.current = "char"
+            self.char_name_input.text = name
             self.search_character()
 
-        def open_char(*_):
-            webbrowser.open(f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}")
-            dlg.dismiss()
+        def open_in_site(*_):
+            try:
+                bs.dismiss()
+            except Exception:
+                pass
+            url = f"https://www.tibia.com/community/?subtopic=characters&name={urllib.parse.quote(name)}"
+            webbrowser.open(url)
 
-        dlg = MDDialog(
-            title=name,
-            text="O que você quer fazer?",
-            buttons=[
-                MDFlatButton(text="VER NO APP", on_release=view_in_app),
-                MDFlatButton(text="ABRIR NO SITE", on_release=open_char),
-                MDFlatButton(text="REMOVER", on_release=remove),
-                MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss()),
-            ],
-        )
-        dlg.open()
+        def remove(*_):
+            try:
+                bs.dismiss()
+            except Exception:
+                pass
+            self.remove_favorite(name)
 
-    # --------------------
-    # Shared XP tab
-    # --------------------
+        bs.add_item("Ver no app", view_in_app, icon="account-search")
+        bs.add_item("Abrir no site", open_in_site, icon="open-in-new")
+        bs.add_item("Remover", remove, icon="delete")
+        bs.open()
+
     def calc_shared_xp(self):
         home = self.root.get_screen("home")
         try:

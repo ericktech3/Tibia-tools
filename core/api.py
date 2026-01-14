@@ -95,75 +95,60 @@ def fetch_character_snapshot(name: str, timeout: int = 12) -> Dict[str, Any]:
     }
 
 
-def is_character_online_tibiadata(name: str, world: str, timeout: int = 12) -> Optional[bool]:
-    """Retorna True/False se o char aparece na lista de online do world.
-
-    Se houver erro (world inválido / indisponível), retorna None.
+def is_character_online_tibiadata(name: str, world: Optional[str] = None, timeout: int = 12) -> Optional[bool]:
     """
-    def _looks_like_player_list(v: Any) -> bool:
-        if not isinstance(v, list) or not v:
-            return False
-        # heurística: lista de dicts com pelo menos 'name'
-        ok = 0
-        for it in v[:25]:
-            if isinstance(it, dict) and isinstance(it.get("name"), str):
-                ok += 1
-        return ok >= max(1, min(3, len(v)))
+    Retorna:
+      - True  -> online
+      - False -> offline
+      - None  -> falha (para permitir fallback em outro método)
 
-    def _find_best_player_list(obj: Any, depth: int = 0) -> Optional[List[Dict[str, Any]]]:
-        if depth > 6:
-            return None
-
-        best: Optional[List[Dict[str, Any]]] = None
-
-        if isinstance(obj, dict):
-            for v in obj.values():
-                if _looks_like_player_list(v):
-                    cand = [x for x in v if isinstance(x, dict)]
-                    if best is None or len(cand) > len(best):
-                        best = cand
-                else:
-                    nested = _find_best_player_list(v, depth + 1)
-                    if nested and (best is None or len(nested) > len(best)):
-                        best = nested
-
-        elif isinstance(obj, list):
-            for v in obj:
-                nested = _find_best_player_list(v, depth + 1)
-                if nested and (best is None or len(nested) > len(best)):
-                    best = nested
-
-        return best
-
+    Se world não for informado, usa o endpoint do personagem (que já traz status).
+    """
     try:
-        safe_world = requests.utils.quote(str(world))
-        data = _get_json(WORLD_URL.format(world=safe_world), timeout)
+        # Sem world: endpoint do personagem (melhor para Favoritos)
+        if not world:
+            data = fetch_character_tibiadata(name, timeout=timeout)
+            status = None
+            if isinstance(data, dict):
+                char_block = data.get("character")
+                if isinstance(char_block, dict):
+                    inner = char_block.get("character") if isinstance(char_block.get("character"), dict) else char_block
+                    if isinstance(inner, dict):
+                        status = inner.get("status") or inner.get("state") or inner.get("online_status")
+            if isinstance(status, str):
+                st = status.strip().lower()
+                if st == "online":
+                    return True
+                if st == "offline":
+                    return False
+            # Sem status: assume offline (sem "desconhecido" na UI)
+            return False
 
-        # v4 típico: {"world": {"name": ..., "online_players": [...]}, "information": {...}}
-        # Alguns wrappers antigos (ou cópias) podem vir como {"world": {"world": {...}}}
-        world_obj: Any = data.get("world", {})
-        if isinstance(world_obj, dict) and isinstance(world_obj.get("world"), dict):
-            world_obj = world_obj.get("world")
+        # Com world: checa lista de online players do mundo
+        safe_world = requests.utils.quote(str(world).strip())
+        url = f"https://api.tibiadata.com/v4/world/{safe_world}"
+        data = _get_json(url, timeout=timeout)
 
+        world_block = (data or {}).get("world", {}) if isinstance(data, dict) else {}
         players = None
-        if isinstance(world_obj, dict) and isinstance(world_obj.get("online_players"), list):
-            players = [x for x in (world_obj.get("online_players") or []) if isinstance(x, dict)]
-        else:
-            # fallback: procura recursivamente uma lista "parecida" com online players
-            players = _find_best_player_list(world_obj)
+        if isinstance(world_block, dict):
+            players = world_block.get("online_players") or world_block.get("players_online") or world_block.get("players")
+            if isinstance(players, dict):
+                players = players.get("online_players") or players.get("players") or players.get("data")
+        if not players or not isinstance(players, list):
+            return False
 
-        # Se não conseguimos achar a lista, devolvemos None (desconhecido) — para não forçar OFFLINE errado.
-        if not players:
-            return None
-
-        target = (name or "").strip().lower()
+        target = name.strip().lower()
         for p in players:
-            if (p.get("name") or "").strip().lower() == target:
+            if isinstance(p, dict):
+                pname = p.get("name") or p.get("player_name")
+            else:
+                pname = p
+            if isinstance(pname, str) and pname.strip().lower() == target:
                 return True
         return False
     except Exception:
         return None
-
 
 def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> Optional[bool]:
     """Fallback extra usando o site oficial (tibia.com) para checar se o char está online.
