@@ -98,6 +98,7 @@ class TibiaToolsApp(MDApp):
         # Favorites (chars) UI/status helpers
         self._fav_items = {}  # lower(char_name) -> list item
         self._fav_status_cache = {}  # lower(char_name) -> last known "online"/"offline"
+        self._fav_world_cache = {}  # lower(char_name) -> cached world
         self._fav_status_job_id = 0
         self._fav_refresh_event = None
 
@@ -923,6 +924,14 @@ class TibiaToolsApp(MDApp):
 
             if ok:
                 self._char_show_result(home, payload_or_msg)
+                # cache do world para a aba Favoritos
+                try:
+                    w = str((payload_or_msg or {}).get("world") or "").strip()
+                    t = str((payload_or_msg or {}).get("title") or "").strip()
+                    if w and w.upper() != "N/A" and t:
+                        self._cache_set(f"fav_world:{t.lower()}", w)
+                except Exception:
+                    pass
                 self.toast("Char encontrado.")
             else:
                 self._char_show_error(home, str(payload_or_msg))
@@ -991,7 +1000,7 @@ class TibiaToolsApp(MDApp):
             self._fav_items[name.strip().lower()] = item
             container.add_widget(item)
 
-            if force or state is None or str(state).strip().lower() != "online":
+            if force or state is None or self._fav_status_needs_refresh(name, ttl_seconds=45):
                 names_to_check.append(name)
 
         if not silent and force:
@@ -1014,17 +1023,119 @@ class TibiaToolsApp(MDApp):
 
         # 1) cache em memória (não expira enquanto o app está aberto)
         try:
-            if hasattr(self, "_fav_status_cache") and key_clean in self._fav_status_cache:
+            if key_clean in getattr(self, "_fav_status_cache", {}):
                 return self._fav_status_cache.get(key_clean)
         except Exception:
             pass
 
-        # 2) cache persistente (com TTL mais folgado para evitar ficar só "Atualizando...")
-        key = f"fav_status:{key_clean}"
-        cached = self._cache_get(key, ttl_seconds=10 * 60)  # 10 min
+        # 2) cache persistente (TTL moderado)
+        cached = self._cache_get(f"fav_status:{key_clean}", ttl_seconds=120)  # 2 min
         if isinstance(cached, str):
             return cached
         return None
+
+    def _fav_status_needs_refresh(self, name: str, ttl_seconds: int = 45) -> bool:
+        """Decide se vale atualizar o status novamente.
+
+        Usamos o timestamp do cache persistente (self.cache), não o cache em memória.
+        """
+        try:
+            key_clean = (name or "").strip().lower()
+            if not key_clean:
+                return True
+            item = self.cache.get(f"fav_status:{key_clean}")
+            if not isinstance(item, dict):
+                return True
+            ts = item.get("ts")
+            if not ts:
+                return True
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(ts)
+            except Exception:
+                return True
+            age = (datetime.utcnow() - dt).total_seconds()
+            return age > ttl_seconds
+        except Exception:
+            return True
+
+    def _get_cached_fav_world(self, name: str) -> Optional[str]:
+        key_clean = (name or "").strip().lower()
+        if not key_clean:
+            return None
+
+        try:
+            if key_clean in getattr(self, "_fav_world_cache", {}):
+                w = self._fav_world_cache.get(key_clean)
+                return str(w).strip() if w else None
+        except Exception:
+            pass
+
+        cached = self._cache_get(f"fav_world:{key_clean}", ttl_seconds=30 * 24 * 3600)  # 30 dias
+        if isinstance(cached, str) and cached.strip():
+            try:
+                self._fav_world_cache[key_clean] = cached.strip()
+            except Exception:
+                pass
+            return cached.strip()
+        return None
+
+    def _set_cached_fav_world(self, name: str, world: str) -> None:
+        key_clean = (name or "").strip().lower()
+        w = (world or "").strip()
+        if not key_clean or not w:
+            return
+        try:
+            self._fav_world_cache[key_clean] = w
+        except Exception:
+            pass
+        try:
+            self._cache_set(f"fav_world:{key_clean}", w)
+        except Exception:
+            pass
+
+    def _fetch_character_world(self, name: str) -> Optional[str]:
+        """Busca o world do char via TibiaData e cacheia."""
+        try:
+            data = fetch_character_tibiadata(name, timeout=12)
+            cw = data.get("character", {}) if isinstance(data, dict) else {}
+            ch = cw.get("character", cw) if isinstance(cw, dict) else {}
+            world = str((ch or {}).get("world") or "").strip()
+            if world and world.upper() != "N/A":
+                self._set_cached_fav_world(name, world)
+                return world
+        except Exception:
+            pass
+        return None
+
+    def _fetch_world_online_players(self, world: str, timeout: int = 12) -> Optional[set]:
+        """Retorna um set (lowercase) com os nomes online no world (TibiaData /v4/world/{world})."""
+        try:
+            safe_world = requests.utils.quote(str(world).strip())
+            url = f"https://api.tibiadata.com/v4/world/{safe_world}"
+            r = requests.get(url, timeout=timeout, headers={"User-Agent": "TibiaToolsApp"})
+            r.raise_for_status()
+            data = r.json() if r.text else {}
+            wb = (data or {}).get("world", {}) if isinstance(data, dict) else {}
+            players = None
+            if isinstance(wb, dict):
+                players = wb.get("online_players") or wb.get("players_online") or wb.get("players")
+                if isinstance(players, dict):
+                    players = players.get("online_players") or players.get("players") or players.get("data")
+            if not isinstance(players, list):
+                return set()
+            out = set()
+            for p in players:
+                pname = None
+                if isinstance(p, dict):
+                    pname = p.get("name") or p.get("player_name")
+                else:
+                    pname = p
+                if isinstance(pname, str) and pname.strip():
+                    out.add(pname.strip().lower())
+            return out
+        except Exception:
+            return None
     def _fav_status_presentation(self, state) -> tuple[str, tuple]:
         s = str(state).strip().lower() if state is not None else ""
         if s == "online" or state is True:
@@ -1131,69 +1242,74 @@ class TibiaToolsApp(MDApp):
                     pass
         except Exception as e:
             print(f"[FAV] Erro ao remover favorito: {e}")
+
     def _refresh_fav_statuses_worker(self, names: List[str], job_id: int):
-        """Worker de atualização de status dos favoritos.
+        """Atualiza o status dos favoritos em background, minimizando chamadas e falsos OFF.
 
-        Faz as chamadas de rede em background e atualiza a UI via Clock.
+        Em vez de checar 1 a 1 (muito request e pode dar falso OFF),
+        agrupamos por world e consultamos o /v4/world/{world} (lista de online players).
         """
         try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-        except Exception:
-            ThreadPoolExecutor = None
-            as_completed = None
+            # 1) resolve world de cada char (cache -> TibiaData /v4/character)
+            name_to_world = {}
+            unknown = []
 
-        try:
-            if ThreadPoolExecutor and as_completed:
-                max_workers = min(3, max(1, len(names)))
-                with ThreadPoolExecutor(max_workers=max_workers) as ex:
-                    fut_map = {ex.submit(self._fetch_character_online_state, n): n for n in names}
-                    for fut in as_completed(fut_map):
-                        n = fut_map[fut]
-                        try:
-                            status = fut.result()
-                        except Exception:
-                            status = None
-                        if status is None:
-                            continue
-                        Clock.schedule_once(lambda dt, nn=n, st=status: self._set_fav_item_status(nn, st), 0)
-            else:
-                # Fallback sequencial
-                for n in names:
-                    status = self._fetch_character_online_state(n)
-                    if status is None:
-                        continue
-                    Clock.schedule_once(lambda dt, nn=n, st=status: self._set_fav_item_status(nn, st), 0)
+            for n in names:
+                if job_id != self._fav_status_job_id:
+                    return
+                w = self._get_cached_fav_world(n)
+                if not w:
+                    w = self._fetch_character_world(n)
+                if w:
+                    name_to_world[n] = w
+                else:
+                    unknown.append(n)
+
+            # 2) agrupa por world
+            by_world = {}
+            for n, w in name_to_world.items():
+                by_world.setdefault(w, []).append(n)
+
+            # 3) para cada world, pega o set de online players 1x
+            for w, ns in by_world.items():
+                if job_id != self._fav_status_job_id:
+                    return
+                online_set = self._fetch_world_online_players(w, timeout=12)
+                if online_set is None:
+                    online_set = set()
+
+                for n in ns:
+                    if job_id != self._fav_status_job_id:
+                        return
+                    is_on = (n or "").strip().lower() in online_set
+                    st = "online" if is_on else "offline"
+                    Clock.schedule_once(lambda dt, nn=n, stt=st: self._set_fav_item_status(nn, stt), 0)
+
+            # 4) fallback (se não conseguimos world): tenta método antigo (tibia.com / endpoint do char)
+            for n in unknown:
+                if job_id != self._fav_status_job_id:
+                    return
+                st = self._fetch_character_online_state(n)
+                if st is None:
+                    # mantém último estado se existir, senão offline
+                    k = (n or "").strip().lower()
+                    st = getattr(self, "_fav_status_cache", {}).get(k) or "offline"
+                Clock.schedule_once(lambda dt, nn=n, stt=st: self._set_fav_item_status(nn, stt), 0)
         finally:
-            def _finish(_dt):
-                self._fav_refreshing = False
-            Clock.schedule_once(_finish, 0)
-    def _fetch_character_online_state(self, name: str) -> str:
-        """Retorna o estado online do personagem como "online" ou "offline".
+            Clock.schedule_once(lambda _dt: setattr(self, "_fav_refreshing", False), 0)
 
-        Favoritos roda em background e não pode ficar preso em "Atualizando..." por falha de rede.
-        Estratégia (igual a aba Char, mas com timeouts maiores):
-          1) tibia.com (mais confiável para Online)
-          2) TibiaData /v4/character (fallback rápido)
-          3) Se tudo falhar, devolve o último estado conhecido (se existir) ou "offline".
+    def _fetch_character_online_state(self, name: str) -> Optional[str]:
+        """Fallback (1 a 1) para descobrir online/offline.
+
+        Usado apenas quando não conseguimos resolver o world para usar o /v4/world/{world}.
         """
-        key = (name or "").strip().lower()
-
-        # 0) último estado conhecido (se houver)
-        last = None
         try:
-            last = getattr(self, "_fav_status_cache", {}).get(key)
-        except Exception:
-            last = None
-
-        # 1) tibia.com
-        try:
-            tc = is_character_online_tibia_com(name, world="", timeout=10)
+            tc = is_character_online_tibia_com(name, world="", timeout=12)
             if tc is not None:
                 return "online" if tc else "offline"
         except Exception:
             pass
 
-        # 2) TibiaData (endpoint do personagem)
         try:
             td = is_character_online_tibiadata(name, world=None, timeout=12)
             if td is not None:
@@ -1201,7 +1317,8 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
-        return last if isinstance(last, str) and last else "offline"
+        return None
+
     def _fav_actions(self, name: str, caller=None):
         """Menu de ações para um favorito.
 
