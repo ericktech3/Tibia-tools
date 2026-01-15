@@ -152,6 +152,20 @@ class TibiaToolsApp(MDApp):
     # --------------------
     # Navigation
     # --------------------
+
+    def on_start(self):
+        # Pede permissão de notificações no primeiro uso (Android 13+).
+        # Se o usuário negar, não abre Configurações automaticamente aqui (menos invasivo).
+        try:
+            if self._prefs_get("asked_post_notifications", False):
+                return
+            # Marca como perguntado para não spammar.
+            self._prefs_set("asked_post_notifications", True)
+            from kivy.clock import Clock
+            Clock.schedule_once(lambda *_: self._ensure_post_notifications_permission(auto_open_settings=False), 0.6)
+        except Exception:
+            pass
+
     def go(self, screen_name: str):
         sm = self.root
         if isinstance(sm, ScreenManager) and screen_name in sm.screen_names:
@@ -201,12 +215,14 @@ class TibiaToolsApp(MDApp):
     # --------------------
     def _is_android(self) -> bool:
         return platform == "android"
-    def _ensure_post_notifications_permission(self, on_result=None) -> bool:
+    def _ensure_post_notifications_permission(self, on_result=None, auto_open_settings: bool = True) -> bool:
         """Android 13+ exige POST_NOTIFICATIONS.
 
         Retorna True se já está OK (ou não precisa).
         Se precisar pedir, dispara o prompt e retorna False.
         Se `on_result` for passado, chama com (granted: bool) quando o usuário responder.
+
+        `auto_open_settings`: se True e o usuário negar, abre a tela de notificações do app.
         """
         if not self._is_android():
             return True
@@ -237,7 +253,8 @@ class TibiaToolsApp(MDApp):
                 if not granted:
                     try:
                         self.toast("Ative a permissão de notificações para o Tibia Tools")
-                        self._open_app_notification_settings()
+                        if auto_open_settings:
+                            self._open_app_notification_settings()
                     except Exception:
                         pass
 
@@ -247,13 +264,24 @@ class TibiaToolsApp(MDApp):
                     except Exception:
                         pass
 
-            request_permissions([perm], _cb)
+            # Em algumas ROMs, o prompt só aparece se chamado na UI thread.
+            try:
+                from android.runnable import run_on_ui_thread  # type: ignore
+
+                @run_on_ui_thread
+                def _req():
+                    request_permissions([perm], _cb)
+
+                _req()
+            except Exception:
+                request_permissions([perm], _cb)
+
             return False
         except Exception:
             # módulo indisponível / android antigo
             return True
 
-    def _open_app_notification_settings(self):
+def _open_app_notification_settings(self):
         """Abre a tela de notificações do app."""
         if not self._is_android():
             return
@@ -300,7 +328,7 @@ class TibiaToolsApp(MDApp):
                     pass
 
         # Android 13+: só inicia depois da permissão
-        ok = self._ensure_post_notifications_permission(on_result=lambda granted: _do_start() if granted else None)
+        ok = self._ensure_post_notifications_permission(on_result=lambda granted: _do_start() if granted else None, auto_open_settings=True)
         if ok:
             _do_start()
 
