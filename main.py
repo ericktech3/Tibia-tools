@@ -281,7 +281,8 @@ class TibiaToolsApp(MDApp):
             # módulo indisponível / android antigo
             return True
 
-def _open_app_notification_settings(self):
+
+    def _open_app_notification_settings(self):
         """Abre a tela de notificações do app."""
         if not self._is_android():
             return
