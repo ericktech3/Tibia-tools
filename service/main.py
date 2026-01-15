@@ -63,6 +63,27 @@ def _android_notify(title: str, text: str, notif_id: int = 1002):
     except Exception as e:
         _append_crash_log(f"notify fail: {e}")
 
+
+def _lower_name(n: str) -> str:
+    return str(n or "").strip().lower()
+
+def _to_int(v):
+    try:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            return int(v)
+        s = str(v).strip()
+        if s.isdigit():
+            return int(s)
+    except Exception:
+        pass
+    return None
+
 def main():
     try:
         state_mod, tibia_mod, prefix = import_core_modules()
@@ -71,32 +92,119 @@ def main():
         _append_crash_log("IMPORT FAIL:\n" + msg)
         return
 
-    # loop simples: checa favoritos e notifica mudanças (online/offline/level/deaths)
-    last_snap: Dict[str, Dict[str, Any]] = {}
+    last_world_online_cache: Dict[str, Any] = {}  # world -> set(lower names)
 
     while True:
         try:
-            st = state_mod.load_state(state_mod.default_data_dir_android())
+            data_dir = state_mod.default_data_dir_android()
+            st = state_mod.load_state(data_dir)
+
             favorites = st.get("favorites", [])
             monitoring = bool(st.get("monitoring", False))
-            interval = int(st.get("interval_seconds", 60))
+            interval = _to_int(st.get("interval_seconds")) or 60
+
             if not monitoring or not favorites:
-                time.sleep(5)
+                time.sleep(15)
                 continue
 
-            for name in favorites[:10]:
-                snap = tibia_mod.fetch_character_snapshot(name)
-                prev = last_snap.get(name)
-                if prev:
-                    # online change
-                    if bool(prev.get("online")) != bool(snap.get("online")):
-                        _android_notify("Status", f"{name} está {'ONLINE' if snap.get('online') else 'OFFLINE'}")
-                    # level change
-                    if prev.get("level") and snap.get("level") and int(prev["level"]) != int(snap["level"]):
-                        _android_notify("Level up", f"{name} agora está level {snap['level']}")
-                last_snap[name] = snap
+            notify_online = bool(st.get("notify_fav_online", True))
+            notify_death = bool(st.get("notify_fav_death", True))
+            notify_level = bool(st.get("notify_fav_level", True))
 
-            time.sleep(max(10, interval))
+            worlds_cache = st.get("worlds", {})
+            if not isinstance(worlds_cache, dict):
+                worlds_cache = {}
+            last = st.get("last", {})
+            if not isinstance(last, dict):
+                last = {}
+
+            # resolve world for each favorite (cache)
+            favs = [str(x) for x in favorites[:10] if str(x).strip()]
+            fav_world: Dict[str, Optional[str]] = {}
+            for name in favs:
+                ln = _lower_name(name)
+                w = worlds_cache.get(ln)
+                if not w:
+                    w = tibia_mod.fetch_character_world(name, timeout=10)
+                    if w:
+                        worlds_cache[ln] = w
+                fav_world[ln] = w or None
+
+            # fetch online lists per world (one request per world)
+            worlds = sorted({w for w in fav_world.values() if isinstance(w, str) and w.strip()})
+            for w in worlds:
+                online_set = tibia_mod.fetch_world_online_players(w, timeout=10)
+                if online_set is None:
+                    # keep last known if request fails
+                    online_set = last_world_online_cache.get(w) or set()
+                else:
+                    last_world_online_cache[w] = online_set
+                last_world_online_cache[w] = online_set
+
+            # check each char
+            changed = False
+            for name in favs:
+                ln = _lower_name(name)
+                snap = tibia_mod.fetch_character_snapshot(name, timeout=12)
+
+                # prefer world-based online resolution
+                w = fav_world.get(ln) or snap.get("world")
+                online = False
+                if isinstance(w, str) and w.strip():
+                    osn = last_world_online_cache.get(w) or set()
+                    online = (ln in osn) or (_lower_name(name) in osn)
+                else:
+                    online = bool(snap.get("online"))
+
+                level = _to_int(snap.get("level"))
+                deaths = snap.get("deaths") or []
+                death_time = None
+                try:
+                    death_time = tibia_mod.newest_death_time(deaths)
+                except Exception:
+                    death_time = None
+
+                prev = last.get(ln) if isinstance(last.get(ln), dict) else None
+
+                # Notifications only if we already have previous state (avoid spam on first run)
+                if isinstance(prev, dict):
+                    prev_online = bool(prev.get("online", False))
+                    prev_level = _to_int(prev.get("level"))
+                    prev_death_time = prev.get("death_time")
+
+                    if notify_online and (not prev_online) and online:
+                        nid = 1000 + (abs(hash(f"online:{ln}")) % 50000)
+                        _android_notify("Favorito online", f"{name} está ONLINE", notif_id=nid)
+
+                    if notify_level and (prev_level is not None) and (level is not None) and level > prev_level:
+                        nid = 1000 + (abs(hash(f"level:{ln}")) % 50000)
+                        _android_notify("Level up", f"{name} agora é level {level}", notif_id=nid)
+
+                    if notify_death and isinstance(death_time, str) and death_time and death_time != prev_death_time:
+                        try:
+                            summary = tibia_mod.death_summary(deaths)
+                        except Exception:
+                            summary = ""
+                        msg = f"{name} morreu"
+                        if summary:
+                            msg += f" ({summary})"
+                        nid = 1000 + (abs(hash(f"death:{ln}:{death_time}")) % 50000)
+                        _android_notify("Morte", msg, notif_id=nid)
+
+                # update persisted last state
+                last[ln] = {
+                    "online": bool(online),
+                    "level": level,
+                    "death_time": death_time,
+                }
+                changed = True
+
+            if changed:
+                st["worlds"] = worlds_cache
+                st["last"] = last
+                state_mod.save_state(data_dir, st)
+
+            time.sleep(max(20, interval))
         except Exception as e:
             msg = "".join(traceback.format_exception(type(e), e, e.__traceback__))
             _append_crash_log(msg)
