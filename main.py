@@ -154,15 +154,30 @@ class TibiaToolsApp(MDApp):
     # --------------------
 
     def on_start(self):
-        # Pede permissão de notificações no primeiro uso (Android 13+).
-        # Se o usuário negar, não abre Configurações automaticamente aqui (menos invasivo).
+        """Android 13+ (SDK 33+) pode exigir permissão de notificação.
+
+        Em vários devices, o helper `android.permissions` não dispara o popup e/ou falha silenciosamente.
+        Aqui fazemos o check + request via Activity.requestPermissions (JNI), e re-tentamos com throttle.
+        """
         try:
-            if self._prefs_get("asked_post_notifications", False):
+            if not self._is_android():
                 return
-            # Marca como perguntado para não spammar.
-            self._prefs_set("asked_post_notifications", True)
+            if self._android_sdk_int() < 33:
+                return
+            # throttle para evitar spam caso o usuário negue
+            now = int(time.time())
+            last = int(self._prefs_get("post_notif_last_req_ts", 0) or 0)
+            if now - last < 60:
+                return
+            # Se já está concedido, ainda precisamos checar se o usuário bloqueou o app/canal.
+            if self._post_notif_permission_granted():
+                if (not self._notifications_globally_enabled()) or (not self._channel_enabled("tibia_tools_watch_fg")):
+                    # aqui não existe popup, só Configurações
+                    Clock.schedule_once(lambda *_: self._prompt_enable_notifications_dialog(), 0.2)
+                return
+            self._prefs_set("post_notif_last_req_ts", now)
             from kivy.clock import Clock
-            Clock.schedule_once(lambda *_: self._ensure_post_notifications_permission(auto_open_settings=False), 0.6)
+            Clock.schedule_once(lambda *_: self._ensure_post_notifications_permission(auto_open_settings=False), 0.8)
         except Exception:
             pass
 
@@ -215,6 +230,95 @@ class TibiaToolsApp(MDApp):
     # --------------------
     def _is_android(self) -> bool:
         return platform == "android"
+
+    def _android_sdk_int(self) -> int:
+        if not self._is_android():
+            return 0
+        try:
+            from jnius import autoclass  # type: ignore
+            VERSION = autoclass("android.os.Build$VERSION")
+            return int(VERSION.SDK_INT)
+        except Exception:
+            return 0
+
+    def _post_notif_permission_granted(self) -> bool:
+        """Check via Activity.checkSelfPermission (não depende de android.permissions)."""
+        if not self._is_android():
+            return True
+        if self._android_sdk_int() < 33:
+            return True
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            PackageManager = autoclass("android.content.pm.PackageManager")
+            activity = PythonActivity.mActivity
+            perm = "android.permission.POST_NOTIFICATIONS"
+            return activity.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
+        except Exception:
+            return False
+
+    def _notifications_globally_enabled(self) -> bool:
+        """Verifica se o usuário bloqueou notificações do app (toggle do sistema).
+
+        Observação: isso é diferente do runtime permission (Android 13+).
+        Em muitos aparelhos (MIUI/OneUI/etc.), o usuário pode ter notificações desligadas
+        mesmo com a permissão concedida — e aí NÃO existe popup, só Configurações.
+        """
+        if not self._is_android():
+            return True
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            Context = autoclass("android.content.Context")
+            activity = PythonActivity.mActivity
+            nm = activity.getSystemService(Context.NOTIFICATION_SERVICE)
+            # API 24+
+            try:
+                return bool(nm.areNotificationsEnabled())
+            except Exception:
+                return True
+        except Exception:
+            return True
+
+    def _channel_enabled(self, channel_id: str) -> bool:
+        if not self._is_android():
+            return True
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            Context = autoclass("android.content.Context")
+            NotificationManager = autoclass("android.app.NotificationManager")
+            activity = PythonActivity.mActivity
+            nm = activity.getSystemService(Context.NOTIFICATION_SERVICE)
+            ch = nm.getNotificationChannel(channel_id)
+            if ch is None:
+                return True
+            return int(ch.getImportance()) != int(NotificationManager.IMPORTANCE_NONE)
+        except Exception:
+            return True
+
+    def _prompt_enable_notifications_dialog(self):
+        """Mostra um dialog com atalho para Configurações de notificação do app."""
+        try:
+            txt = (
+                "As notificações do Tibia Tools estão desativadas no sistema.\n"
+                "Toque em 'Abrir configurações' e ative Notificações."
+            )
+            dlg = MDDialog(
+                title="Ativar notificações",
+                text=txt,
+                buttons=[
+                    MDFlatButton(text="AGORA NÃO", on_release=lambda *_: dlg.dismiss()),
+                    MDFlatButton(text="ABRIR CONFIGURAÇÕES", on_release=lambda *_: (dlg.dismiss(), self._open_app_notification_settings())),
+                ],
+            )
+            dlg.open()
+        except Exception:
+            # fallback
+            try:
+                self.toast("Ative as notificações nas Configurações do app")
+            except Exception:
+                pass
     def _ensure_post_notifications_permission(self, on_result=None, auto_open_settings: bool = True) -> bool:
         """Android 13+ exige POST_NOTIFICATIONS.
 
@@ -227,29 +331,35 @@ class TibiaToolsApp(MDApp):
         if not self._is_android():
             return True
 
-        # Detecta API level
-        try:
-            from jnius import autoclass  # type: ignore
-            Build = autoclass("android.os.Build")
-            if int(Build.VERSION.SDK_INT) < 33:
-                return True
-        except Exception:
-            # se não der pra detectar, tenta seguir sem travar
+        if self._android_sdk_int() < 33:
             return True
 
-        try:
-            from android.permissions import check_permission, request_permissions  # type: ignore
-            perm = "android.permission.POST_NOTIFICATIONS"
-            if check_permission(perm):
-                return True
-
-            def _cb(perms, grants):
-                granted = False
+        # 1) check robusto
+        if self._post_notif_permission_granted():
+            # Mesmo com permissão, o usuário pode ter bloqueado notificações do app/canal.
+            if (not self._notifications_globally_enabled()) or (not self._channel_enabled("tibia_tools_watch_fg")):
                 try:
-                    granted = bool(grants) and all(bool(g) for g in grants)
+                    self.toast("Notificações desativadas no sistema")
                 except Exception:
-                    granted = False
+                    pass
+                if auto_open_settings:
+                    try:
+                        self._open_app_notification_settings()
+                    except Exception:
+                        pass
+                return False
+            return True
 
+        # 2) request robusto via Activity.requestPermissions
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            activity = PythonActivity.mActivity
+            perm = "android.permission.POST_NOTIFICATIONS"
+            req_code = 7331
+
+            def _after_check(*_):
+                granted = self._post_notif_permission_granted()
                 if not granted:
                     try:
                         self.toast("Ative a permissão de notificações para o Tibia Tools")
@@ -257,29 +367,54 @@ class TibiaToolsApp(MDApp):
                             self._open_app_notification_settings()
                     except Exception:
                         pass
-
                 if on_result:
                     try:
                         on_result(granted)
                     except Exception:
                         pass
 
-            # Em algumas ROMs, o prompt só aparece se chamado na UI thread.
+            # O popup só aparece se chamado na UI thread.
             try:
                 from android.runnable import run_on_ui_thread  # type: ignore
 
                 @run_on_ui_thread
                 def _req():
-                    request_permissions([perm], _cb)
+                    try:
+                        activity.requestPermissions([perm], req_code)
+                    except Exception:
+                        # fallback para versões antigas
+                        try:
+                            ActivityCompat = autoclass("androidx.core.app.ActivityCompat")
+                            ActivityCompat.requestPermissions(activity, [perm], req_code)
+                        except Exception:
+                            pass
 
                 _req()
             except Exception:
-                request_permissions([perm], _cb)
+                try:
+                    activity.requestPermissions([perm], req_code)
+                except Exception:
+                    pass
 
+            # Não temos callback direto aqui; checa depois.
+            from kivy.clock import Clock
+            Clock.schedule_once(_after_check, 1.2)
+            Clock.schedule_once(_after_check, 2.5)
             return False
         except Exception:
-            # módulo indisponível / android antigo
-            return True
+            # Se não der pra pedir, guia o usuário para Configurações.
+            try:
+                self.toast("Não foi possível abrir o popup de permissão. Abra as Configurações do app e ative Notificações.")
+                if auto_open_settings:
+                    self._open_app_notification_settings()
+            except Exception:
+                pass
+            if on_result:
+                try:
+                    on_result(False)
+                except Exception:
+                    pass
+            return False
 
 
     def _open_app_notification_settings(self):
