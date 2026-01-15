@@ -97,6 +97,7 @@ class TibiaToolsApp(MDApp):
 
         # Favorites (chars) UI/status helpers
         self._fav_items = {}  # lower(char_name) -> list item
+        self._fav_status_cache = {}  # lower(char_name) -> last known "online"/"offline"
         self._fav_status_job_id = 0
         self._fav_refresh_event = None
 
@@ -978,11 +979,7 @@ class TibiaToolsApp(MDApp):
         names_to_check: list[str] = []
         names = list(self.favorites)
         for name in names:
-            if force:
-                state, _ = self._get_cached_fav_status(name)
-                needs_refresh = True
-            else:
-                state, needs_refresh = self._get_cached_fav_status(name)
+            state = None if force else self._get_cached_fav_status(name)
             secondary, color = self._fav_status_presentation(state)
 
             item = TwoLineIconListItem(text=name, secondary_text=secondary)
@@ -994,7 +991,7 @@ class TibiaToolsApp(MDApp):
             self._fav_items[name.strip().lower()] = item
             container.add_widget(item)
 
-            if needs_refresh:
+            if force or state is None or str(state).strip().lower() != "online":
                 names_to_check.append(name)
 
         if not silent and force:
@@ -1010,49 +1007,24 @@ class TibiaToolsApp(MDApp):
                 daemon=True,
             ).start()
 
-    def _get_cached_fav_status(self, name: str) -> tuple[Optional[str], bool]:
-        """Retorna (estado, precisa_atualizar) para um favorito.
+    def _get_cached_fav_status(self, name: str) -> Optional[str]:
+        key_clean = (name or "").strip().lower()
+        if not key_clean:
+            return None
 
-        - estado: "online" | "offline" | None
-        - precisa_atualizar: True se devemos buscar estado novo em background
-
-        Mantém compatibilidade com caches antigos (value como dict/bool/str).
-        """
-        key = f"fav_status:{(name or '').strip().lower()}"
+        # 1) cache em memória (não expira enquanto o app está aberto)
         try:
-            item = self.cache.get(key)
-            if not isinstance(item, dict):
-                return None, True
-
-            ts = item.get('ts')
-            val = item.get('value')
-
-            # Compat: versões antigas guardavam dict {'state': ...} ou bool.
-            if isinstance(val, dict):
-                val = val.get('state') or val.get('value')
-            if isinstance(val, bool):
-                val = 'online' if val else 'offline'
-
-            if not isinstance(val, str):
-                return None, True
-            state = val.strip().lower()
-            if state not in ('online', 'offline'):
-                return None, True
-
-            # Se não temos timestamp válido, exibimos o estado e pedimos refresh.
-            if not ts:
-                return state, True
-            try:
-                dt = datetime.fromisoformat(ts)
-                age = (datetime.utcnow() - dt).total_seconds()
-            except Exception:
-                return state, True
-
-            ttl = 120 if state == 'online' else 60
-            return state, age > ttl
+            if hasattr(self, "_fav_status_cache") and key_clean in self._fav_status_cache:
+                return self._fav_status_cache.get(key_clean)
         except Exception:
-            return None, True
+            pass
 
+        # 2) cache persistente (com TTL mais folgado para evitar ficar só "Atualizando...")
+        key = f"fav_status:{key_clean}"
+        cached = self._cache_get(key, ttl_seconds=10 * 60)  # 10 min
+        if isinstance(cached, str):
+            return cached
+        return None
     def _fav_status_presentation(self, state) -> tuple[str, tuple]:
         s = str(state).strip().lower() if state is not None else ""
         if s == "online" or state is True:
@@ -1196,38 +1168,40 @@ class TibiaToolsApp(MDApp):
                 self._fav_refreshing = False
             Clock.schedule_once(_finish, 0)
     def _fetch_character_online_state(self, name: str) -> str:
-        """Retorna o estado online do personagem.
+        """Retorna o estado online do personagem como "online" ou "offline".
 
-        Nota: o TibiaData pode atrasar (principalmente OFF->ON). Para evitar falso OFF:
-          1) TibiaData como fast path (se retornar ON, já serve).
-          2) Confirmação via tibia.com quando TibiaData não diz ON.
-          3) Se tibia.com falhar, voltamos para o valor do TibiaData (se existir).
+        Favoritos roda em background e não pode ficar preso em "Atualizando..." por falha de rede.
+        Estratégia (igual a aba Char, mas com timeouts maiores):
+          1) tibia.com (mais confiável para Online)
+          2) TibiaData /v4/character (fallback rápido)
+          3) Se tudo falhar, devolve o último estado conhecido (se existir) ou "offline".
         """
-        # 1) Fast path via TibiaData (geralmente rápido)
-        td = None
+        key = (name or "").strip().lower()
+
+        # 0) último estado conhecido (se houver)
+        last = None
         try:
-            td = is_character_online_tibiadata(name, timeout=6)
+            last = getattr(self, "_fav_status_cache", {}).get(key)
         except Exception:
-            td = None
+            last = None
 
-        if td is True:
-            return "online"
-
-        # 2) Confirmação/autoridade via tibia.com (evita falso OFF)
+        # 1) tibia.com
         try:
-            tc = is_character_online_tibia_com(name, world="", timeout=8)
+            tc = is_character_online_tibia_com(name, world="", timeout=10)
             if tc is not None:
                 return "online" if tc else "offline"
         except Exception:
-            tc = None
+            pass
 
-        # 3) Fallback para TibiaData (se tivermos algo)
-        if td is not None:
-            return "online" if td else "offline"
+        # 2) TibiaData (endpoint do personagem)
+        try:
+            td = is_character_online_tibiadata(name, world=None, timeout=12)
+            if td is not None:
+                return "online" if td else "offline"
+        except Exception:
+            pass
 
-        return None
-
-
+        return last if isinstance(last, str) and last else "offline"
     def _fav_actions(self, name: str, caller=None):
         """Menu de ações para um favorito.
 
