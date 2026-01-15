@@ -50,18 +50,64 @@ def _android_notify(title: str, text: str, notif_id: int = 1002):
         service = PythonService.mService
         nm = service.getSystemService(Context.NOTIFICATION_SERVICE)
 
-        channel_id = "tibia_tools_watch"
+        channel_id = "tibia_tools_events"
         if hasattr(nm, "createNotificationChannel"):
-            channel = NotificationChannel(channel_id, "Tibia Tools", NotificationManager.IMPORTANCE_DEFAULT)
+            channel = NotificationChannel(channel_id, "Tibia Tools Alertas", NotificationManager.IMPORTANCE_DEFAULT)
             nm.createNotificationChannel(channel)
 
         builder = NotificationBuilder(service, channel_id)
         builder.setContentTitle(title)
         builder.setContentText(text)
         builder.setSmallIcon(service.getApplicationInfo().icon)
+        try:
+            builder.setAutoCancel(True)
+        except Exception:
+            pass
         nm.notify(notif_id, builder.build())
     except Exception as e:
         _append_crash_log(f"notify fail: {e}")
+
+def _android_start_foreground(title: str, text: str, notif_id: int = 1001):
+    """Garante uma notificação fixa (foreground) com texto visível.
+    Alguns devices mostram a notificação do serviço em branco se não chamarmos startForeground manualmente.
+    """
+    try:
+        from jnius import autoclass
+        Context = autoclass("android.content.Context")
+        NotificationChannel = autoclass("android.app.NotificationChannel")
+        NotificationManager = autoclass("android.app.NotificationManager")
+        NotificationBuilder = autoclass("android.app.Notification$Builder")
+        PythonService = autoclass("org.kivy.android.PythonService")
+        service = PythonService.mService
+        nm = service.getSystemService(Context.NOTIFICATION_SERVICE)
+
+        channel_id = "tibia_tools_watch_fg"
+        if hasattr(nm, "createNotificationChannel"):
+            # IMPORTANCE_MIN para não fazer barulho
+            channel = NotificationChannel(channel_id, "Tibia Tools Monitor", NotificationManager.IMPORTANCE_MIN)
+            nm.createNotificationChannel(channel)
+
+        builder = NotificationBuilder(service, channel_id)
+        builder.setContentTitle(title)
+        builder.setContentText(text)
+        builder.setSmallIcon(service.getApplicationInfo().icon)
+        try:
+            builder.setOngoing(True)
+        except Exception:
+            pass
+        try:
+            builder.setOnlyAlertOnce(True)
+        except Exception:
+            pass
+
+        notif = builder.build()
+        try:
+            service.startForeground(notif_id, notif)
+        except Exception:
+            # fallback: postar como notificação normal
+            nm.notify(notif_id, notif)
+    except Exception as e:
+        _append_crash_log(f"foreground notify fail: {e}")
 
 
 def _lower_name(n: str) -> str:
@@ -93,6 +139,7 @@ def main():
         return
 
     last_world_online_cache: Dict[str, Any] = {}  # world -> set(lower names)
+    last_fg_text = None
 
     while True:
         try:
@@ -106,6 +153,15 @@ def main():
             if not monitoring or not favorites:
                 time.sleep(15)
                 continue
+
+            # força notificação do serviço com texto visível (evita notificação em branco)
+            try:
+                fg_text = f"Monitorando {len(favorites)} favorito(s) — a cada {interval}s"
+                if fg_text != last_fg_text:
+                    _android_start_foreground("Tibia Tools", fg_text, notif_id=1001)
+                    last_fg_text = fg_text
+            except Exception:
+                pass
 
             notify_online = bool(st.get("notify_fav_online", True))
             notify_death = bool(st.get("notify_fav_death", True))
