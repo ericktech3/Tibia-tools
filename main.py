@@ -201,38 +201,109 @@ class TibiaToolsApp(MDApp):
     # --------------------
     def _is_android(self) -> bool:
         return platform == "android"
+    def _ensure_post_notifications_permission(self, on_result=None) -> bool:
+        """Android 13+ exige POST_NOTIFICATIONS.
 
-    def _ensure_post_notifications_permission(self):
+        Retorna True se já está OK (ou não precisa).
+        Se precisar pedir, dispara o prompt e retorna False.
+        Se `on_result` for passado, chama com (granted: bool) quando o usuário responder.
+        """
         if not self._is_android():
-            return
+            return True
+
+        # Detecta API level
         try:
-            from android.permissions import Permission, check_permission, request_permissions  # type: ignore
-            if not check_permission(Permission.POST_NOTIFICATIONS):
-                request_permissions([Permission.POST_NOTIFICATIONS])
+            from jnius import autoclass  # type: ignore
+            Build = autoclass("android.os.Build")
+            if int(Build.VERSION.SDK_INT) < 33:
+                return True
         except Exception:
-            # Older Android / or running outside Android
-            pass
+            # se não der pra detectar, tenta seguir sem travar
+            return True
 
-    def _start_fav_monitor_service(self):
+        try:
+            from android.permissions import check_permission, request_permissions  # type: ignore
+            perm = "android.permission.POST_NOTIFICATIONS"
+            if check_permission(perm):
+                return True
+
+            def _cb(perms, grants):
+                granted = False
+                try:
+                    granted = bool(grants) and all(bool(g) for g in grants)
+                except Exception:
+                    granted = False
+
+                if not granted:
+                    try:
+                        self.toast("Ative a permissão de notificações para o Tibia Tools")
+                        self._open_app_notification_settings()
+                    except Exception:
+                        pass
+
+                if on_result:
+                    try:
+                        on_result(granted)
+                    except Exception:
+                        pass
+
+            request_permissions([perm], _cb)
+            return False
+        except Exception:
+            # módulo indisponível / android antigo
+            return True
+
+    def _open_app_notification_settings(self):
+        """Abre a tela de notificações do app."""
         if not self._is_android():
             return
-        # Foreground service needs notification permission on Android 13+
-        self._ensure_post_notifications_permission()
         try:
             from jnius import autoclass  # type: ignore
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            PythonService = autoclass("org.kivy.android.PythonService")
-            mActivity = PythonActivity.mActivity
-            # This starts the bundled python-for-android service as a FOREGROUND service
-            PythonService.start(mActivity, "Tibia Tools", "Monitorando favoritos")
-        except Exception:
-            # Fallback (older API)
+            Intent = autoclass("android.content.Intent")
+            Settings = autoclass("android.provider.Settings")
+            Uri = autoclass("android.net.Uri")
+            activity = PythonActivity.mActivity
+            pkg = activity.getPackageName()
+
+            # Preferir tela específica de notificação (quando disponível)
             try:
-                from android import AndroidService  # type: ignore
-                s = AndroidService("Tibia Tools", "Monitorando favoritos")
-                s.start("start")
+                intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                intent.putExtra(Settings.EXTRA_APP_PACKAGE, pkg)
             except Exception:
-                pass
+                intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                intent.setData(Uri.parse("package:" + pkg))
+
+            activity.startActivity(intent)
+        except Exception:
+            pass
+    def _start_fav_monitor_service(self):
+        if not self._is_android():
+            return
+
+        def _do_start():
+            try:
+                from jnius import autoclass  # type: ignore
+                PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                PythonService = autoclass("org.kivy.android.PythonService")
+                mActivity = PythonActivity.mActivity
+                # Inicia o serviço (foreground notification será ajustada dentro do service/main.py)
+                PythonService.start(mActivity, "Tibia Tools", "Monitorando favoritos")
+                return
+            except Exception:
+                # Fallback (older API)
+                try:
+                    from android import AndroidService  # type: ignore
+                    s = AndroidService("Tibia Tools", "Monitorando favoritos")
+                    s.start("start")
+                except Exception:
+                    pass
+
+        # Android 13+: só inicia depois da permissão
+        ok = self._ensure_post_notifications_permission(on_result=lambda granted: _do_start() if granted else None)
+        if ok:
+            _do_start()
+
 
     def _stop_fav_monitor_service(self):
         if not self._is_android():
