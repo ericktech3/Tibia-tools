@@ -28,6 +28,7 @@ from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager
+from kivy.utils import platform
 
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
@@ -52,6 +53,7 @@ try:
     )
     from core.exp_loss import estimate_death_exp_lost
     from core.storage import get_data_dir, safe_read_json, safe_write_json
+    from core import state as fav_state
     from core.bosses import fetch_exevopan_bosses
     from core.boosted import fetch_boosted
     from core.training import TrainingInput, compute_training_plan
@@ -132,6 +134,7 @@ class TibiaToolsApp(MDApp):
             self.load_favorites()
             self._load_prefs_cache()
             Clock.schedule_once(lambda *_: self._apply_settings_to_ui(), 0)
+            Clock.schedule_once(lambda *_: self._maybe_start_fav_monitor_service(), 0.2)
             Clock.schedule_once(lambda *_: self._set_initial_home_tab(), 0)
             Clock.schedule_once(lambda *_: self.dashboard_refresh(), 0)
 
@@ -191,6 +194,107 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
         self.toast(f"{title}: {message}")
+
+
+    # --------------------
+    # Background service: monitor favorites even with the app closed
+    # --------------------
+    def _is_android(self) -> bool:
+        return platform == "android"
+
+    def _ensure_post_notifications_permission(self):
+        if not self._is_android():
+            return
+        try:
+            from android.permissions import Permission, check_permission, request_permissions  # type: ignore
+            if not check_permission(Permission.POST_NOTIFICATIONS):
+                request_permissions([Permission.POST_NOTIFICATIONS])
+        except Exception:
+            # Older Android / or running outside Android
+            pass
+
+    def _start_fav_monitor_service(self):
+        if not self._is_android():
+            return
+        # Foreground service needs notification permission on Android 13+
+        self._ensure_post_notifications_permission()
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            PythonService = autoclass("org.kivy.android.PythonService")
+            mActivity = PythonActivity.mActivity
+            # This starts the bundled python-for-android service as a FOREGROUND service
+            PythonService.start(mActivity, "Tibia Tools", "Monitorando favoritos")
+        except Exception:
+            # Fallback (older API)
+            try:
+                from android import AndroidService  # type: ignore
+                s = AndroidService("Tibia Tools", "Monitorando favoritos")
+                s.start("start")
+            except Exception:
+                pass
+
+    def _stop_fav_monitor_service(self):
+        if not self._is_android():
+            return
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            PythonService = autoclass("org.kivy.android.PythonService")
+            mActivity = PythonActivity.mActivity
+            PythonService.stop(mActivity)
+        except Exception:
+            try:
+                from android import AndroidService  # type: ignore
+                s = AndroidService("Tibia Tools", "Monitorando favoritos")
+                s.stop()
+            except Exception:
+                pass
+
+    def _maybe_start_fav_monitor_service(self):
+        if not self._is_android():
+            return
+        try:
+            st = fav_state.load_state(self.data_dir)
+            if bool(st.get("monitoring", False)):
+                self._start_fav_monitor_service()
+        except Exception:
+            pass
+
+    def _sync_bg_monitor_state_from_ui(self):
+        """Save background-monitor settings into favorites.json (shared with the service)."""
+        try:
+            scr = self.root.get_screen("settings")
+            monitoring = bool(scr.ids.set_bg_monitor.active)
+            notify_online = bool(scr.ids.set_bg_notify_online.active)
+            notify_level = bool(scr.ids.set_bg_notify_level.active)
+            notify_death = bool(scr.ids.set_bg_notify_death.active)
+            try:
+                interval = int((scr.ids.set_bg_interval.text or "60").strip())
+            except Exception:
+                interval = 60
+        except Exception:
+            return
+
+        try:
+            st = fav_state.load_state(self.data_dir)
+            if not isinstance(st, dict):
+                st = {}
+            st["favorites"] = [str(x) for x in (self.favorites or [])]
+            st["monitoring"] = monitoring
+            st["notify_fav_online"] = notify_online
+            st["notify_fav_level"] = notify_level
+            st["notify_fav_death"] = notify_death
+            st["interval_seconds"] = max(20, min(600, int(interval)))
+            fav_state.save_state(self.data_dir, st)
+        except Exception:
+            pass
+
+        # start/stop service immediately
+        if monitoring:
+            self._start_fav_monitor_service()
+        else:
+            self._stop_fav_monitor_service()
 
     def dashboard_refresh(self, *_):
         """Atualiza o resumo do Dashboard usando cache e, se possível, dados ao vivo."""
@@ -362,20 +466,38 @@ class TibiaToolsApp(MDApp):
 # --------------------
     # Storage
     # --------------------
+
     def load_favorites(self):
-        data = safe_read_json(self.fav_path, default=[])
-        if isinstance(data, list):
-            self.favorites = [str(x) for x in data]
-        else:
-            self.favorites = []
+        # favorites.json is now a shared state file used by the background service.
+        # We still keep self.favorites as a simple list for the UI.
+        try:
+            st = fav_state.load_state(self.data_dir)
+            fav = st.get("favorites", []) if isinstance(st, dict) else []
+            if isinstance(fav, list):
+                self.favorites = [str(x) for x in fav]
+            else:
+                self.favorites = []
+        except Exception:
+            # legacy fallback (list)
+            data = safe_read_json(self.fav_path, default=[])
+            if isinstance(data, list):
+                self.favorites = [str(x) for x in data]
+            else:
+                self.favorites = []
+
 
     def save_favorites(self):
-        safe_write_json(self.fav_path, self.favorites)
+        # persist using shared state format (dict) to keep the background service in sync
+        try:
+            st = fav_state.load_state(self.data_dir)
+            if not isinstance(st, dict):
+                st = {}
+            st["favorites"] = [str(x) for x in (self.favorites or [])]
+            fav_state.save_state(self.data_dir, st)
+        except Exception:
+            # fallback: old format
+            safe_write_json(self.fav_path, self.favorites)
 
-
-    # --------------------
-    # Prefs / Cache (modo offline inteligente)
-    # --------------------
     def _load_prefs_cache(self):
         self.prefs = safe_read_json(self.prefs_path, default={}) or {}
         if not isinstance(self.prefs, dict):
@@ -445,6 +567,7 @@ class TibiaToolsApp(MDApp):
         # abre direto no Dashboard
         self.select_home_tab("tab_dashboard")
 
+
     def _apply_settings_to_ui(self):
         try:
             scr = self.root.get_screen("settings")
@@ -457,12 +580,28 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
+        # Background monitor (shared state file)
+        try:
+            st = fav_state.load_state(self.data_dir)
+            scr.ids.set_bg_monitor.active = bool(st.get("monitoring", False))
+            scr.ids.set_bg_notify_online.active = bool(st.get("notify_fav_online", True))
+            scr.ids.set_bg_notify_level.active = bool(st.get("notify_fav_level", True))
+            scr.ids.set_bg_notify_death.active = bool(st.get("notify_fav_death", True))
+            scr.ids.set_bg_interval.text = str(int(st.get("interval_seconds", 60) or 60))
+        except Exception:
+            pass
+
+
     def settings_save(self):
         try:
             scr = self.root.get_screen("settings")
             self._prefs_set("notify_boosted", bool(scr.ids.set_notify_boosted.active))
             self._prefs_set("notify_boss_high", bool(scr.ids.set_notify_boss_high.active))
             self._prefs_set("repo_url", (scr.ids.set_repo_url.text or "").strip())
+
+            # Background monitor settings (favorites online/death/level)
+            self._sync_bg_monitor_state_from_ui()
+
             scr.ids.set_status.text = "Salvo."
             self.toast("Configurações salvas.")
         except Exception:

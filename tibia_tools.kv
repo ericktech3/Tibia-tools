@@ -963,6 +963,81 @@ RootSM:
                         id: set_notify_boss_high
                         active: False
 
+
+                MDSeparator:
+                    height: dp(1)
+
+                MDLabel:
+                    text: "Favoritos (segundo plano)"
+                    bold: True
+                    size_hint_y: None
+                    height: dp(24)
+
+                MDLabel:
+                    text: "Notificações mesmo com o app fechado. Isso roda como serviço em primeiro plano (pode aparecer um aviso fixo do Android)."
+                    theme_text_color: "Hint"
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(6)
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(10)
+
+                    MDLabel:
+                        text: "Monitorar favoritos"
+                        valign: "middle"
+
+                    MDSwitch:
+                        id: set_bg_monitor
+                        active: False
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(10)
+
+                    MDLabel:
+                        text: "Avisar quando ficar online"
+                        valign: "middle"
+
+                    MDSwitch:
+                        id: set_bg_notify_online
+                        active: True
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(10)
+
+                    MDLabel:
+                        text: "Avisar quando upar level"
+                        valign: "middle"
+
+                    MDSwitch:
+                        id: set_bg_notify_level
+                        active: True
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(10)
+
+                    MDLabel:
+                        text: "Avisar quando morrer"
+                        valign: "middle"
+
+                    MDSwitch:
+                        id: set_bg_notify_death
+                        active: True
+
+                MDTextField:
+                    id: set_bg_interval
+                    hint_text: "Intervalo do monitor (segundos) - ex: 60"
+                    text: "60"
+                    mode: "rectangle"
+                    input_filter: "int"
+
                 MDSeparator:
                     height: dp(1)
 
