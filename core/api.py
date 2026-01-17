@@ -27,6 +27,9 @@ WORLD_URL = "https://api.tibiadata.com/v4/world/{world}"
 # GuildStats (fansite) – usado apenas para complementar informações (ex: xp lost em mortes)
 GUILDSTATS_DEATHS_URL = "https://guildstats.eu/character?nick={name}&tab=5"
 
+# GuildStats (fansite) – histórico de experiência (tab=9)
+GUILDSTATS_EXP_URL = "https://guildstats.eu/character?nick={name}&tab=9"
+
 # Tibia.com (oficial) – fallback extra para detectar ONLINE
 # Preferimos a página do personagem (não é paginada como a lista do world).
 TIBIA_CHAR_URL = "https://www.tibia.com/community/?subtopic=characters&name={name}"
@@ -288,6 +291,127 @@ def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
         return []
 
 
+def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str, Any]]:
+    """Retorna o histórico (diário) de experiência do GuildStats (tab=9).
+
+    Saída (ordem conforme a tabela):
+      [{"date": "YYYY-MM-DD", "exp_change": "+33,820,426", "exp_change_int": 33820426}, ...]
+
+    Observação: é um complemento (fansite). Se falhar, devolve lista vazia.
+    """
+    try:
+        safe = requests.utils.quote_plus(name)
+        base_url = GUILDSTATS_EXP_URL.format(name=safe)
+
+        def fetch_html(u: str) -> str:
+            try:
+                r = requests.get(u, timeout=timeout, headers=UA)
+                if r.status_code != 200:
+                    return ""
+                return r.text or ""
+            except Exception:
+                return ""
+
+        html = ""
+        for u in (base_url, base_url + "&lang=pt", base_url + "&lang=en"):
+            html = fetch_html(u)
+            if html:
+                break
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        def norm(s: str) -> str:
+            return re.sub(r"\s+", " ", (s or "").strip()).lower()
+
+        def parse_exp_to_int(s: str) -> Optional[int]:
+            # exemplos: "+33,820,426" | "-55,947,218" | "0" | "+200,710,181 👍"
+            txt = (s or "").strip()
+            if not txt:
+                return None
+            sign = -1 if "-" in txt else 1
+            m = re.findall(r"\d+", txt.replace("\u00a0", " "))
+            if not m:
+                return None
+            num = int("".join(m))
+            return sign * num
+
+        # Achar a tabela correta:
+        # - headers contendo "date" e "exp"+"change"
+        best = None  # (table, date_idx, exp_idx, score)
+        for table in soup.find_all("table"):
+            header_tr = None
+            for tr in table.find_all("tr"):
+                ths = tr.find_all("th")
+                if ths:
+                    header_tr = tr
+                    break
+            if not header_tr:
+                continue
+
+            headers = [norm(th.get_text(" ", strip=True)) for th in header_tr.find_all("th")]
+            if not headers:
+                continue
+
+            date_idx = None
+            exp_idx = None
+            for i, h in enumerate(headers):
+                if h == "date" or h.startswith("date") or "data" == h or h.startswith("data"):
+                    date_idx = i
+                if ("exp" in h) and ("change" in h or "mudan" in h or "varia" in h):
+                    exp_idx = i
+
+            if date_idx is None or exp_idx is None:
+                continue
+
+            # heurística: essa tabela também costuma ter "experience" e "time on-line"
+            score = 0
+            joined = " ".join(headers)
+            if "experience" in joined:
+                score += 1
+            if "time" in joined and "on" in joined:
+                score += 1
+            if "avg" in joined and "hour" in joined:
+                score += 1
+
+            if best is None or score > best[3]:
+                best = (table, date_idx, exp_idx, score)
+
+        if not best:
+            return []
+
+        table, date_idx, exp_idx, _score = best
+
+        out: List[Dict[str, Any]] = []
+        for tr in table.find_all("tr"):
+            tds = tr.find_all("td")
+            if not tds:
+                continue
+            if max(date_idx, exp_idx) >= len(tds):
+                continue
+
+            date_s = re.sub(r"\s+", " ", tds[date_idx].get_text(" ", strip=True) or "").strip()
+            exp_s = re.sub(r"\s+", " ", tds[exp_idx].get_text(" ", strip=True) or "").strip()
+
+            # date geralmente é YYYY-MM-DD
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_s):
+                continue
+            exp_int = parse_exp_to_int(exp_s)
+            if exp_int is None:
+                continue
+
+            out.append({
+                "date": date_s,
+                "exp_change": exp_s,
+                "exp_change_int": exp_int,
+            })
+
+        return out
+    except Exception:
+        return []
+
+
 __all__ = [
     "fetch_worlds",
     "fetch_worlds_tibiadata",
@@ -296,4 +420,5 @@ __all__ = [
     "is_character_online_tibiadata",
     "is_character_online_tibia_com",
     "fetch_guildstats_deaths_xp",
+    "fetch_guildstats_exp_changes",
 ]

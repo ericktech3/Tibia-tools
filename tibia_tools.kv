@@ -249,6 +249,53 @@ RootSM:
                                         icon: "information-outline"
 
                         MDCard:
+                            id: char_xp_card
+                            orientation: "vertical"
+                            padding: dp(12)
+                            spacing: dp(6)
+                            size_hint_y: None
+                            height: self.minimum_height
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+
+                            MDBoxLayout:
+                                size_hint_y: None
+                                height: dp(32)
+                                spacing: dp(6)
+
+                                MDLabel:
+                                    text: "XP últimos 30 dias"
+                                    font_style: "Subtitle1"
+                                    bold: True
+
+                                Widget:
+                                    size_hint_x: 1
+
+                                MDIconButton:
+                                    icon: "open-in-new"
+                                    on_release: app.open_char_xp_source()
+
+                            MDSeparator:
+                                height: dp(1)
+
+                            MDLabel:
+                                id: char_xp_total
+                                text: "—"
+                                theme_text_color: "Hint"
+                                size_hint_y: None
+                                height: self.texture_size[1] + dp(6)
+
+                            MDList:
+                                id: char_xp_list
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                OneLineIconListItem:
+                                    text: "Faça uma busca para ver o histórico."
+                                    IconLeftWidget:
+                                        icon: "chart-line"
+
+                        MDCard:
                             id: char_deaths_card
                             orientation: "vertical"
                             padding: dp(12)

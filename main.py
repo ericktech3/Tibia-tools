@@ -50,6 +50,7 @@ try:
         is_character_online_tibiadata,
         is_character_online_tibia_com,
         fetch_guildstats_deaths_xp,
+        fetch_guildstats_exp_changes,
     )
     from core.exp_loss import estimate_death_exp_lost
     from core.storage import get_data_dir, safe_read_json, safe_write_json
@@ -1083,6 +1084,20 @@ class TibiaToolsApp(MDApp):
             ditem = OneLineIconListItem(text="Aguardando...")
             ditem.add_widget(IconLeftWidget(icon="skull-outline"))
             home.ids.char_deaths_list.add_widget(ditem)
+
+            # XP últimos 30 dias (GuildStats)
+            if "char_xp_list" in home.ids:
+                try:
+                    home.ids.char_xp_total.text = "Carregando histórico de XP..."
+                except Exception:
+                    pass
+                try:
+                    home.ids.char_xp_list.clear_widgets()
+                    xitem = OneLineIconListItem(text="Buscando no GuildStats...")
+                    xitem.add_widget(IconLeftWidget(icon="chart-line"))
+                    home.ids.char_xp_list.add_widget(xitem)
+                except Exception:
+                    pass
             return
 
         # Fallback antigo
@@ -1106,6 +1121,20 @@ class TibiaToolsApp(MDApp):
             ditem = OneLineIconListItem(text="—")
             ditem.add_widget(IconLeftWidget(icon="skull-outline"))
             home.ids.char_deaths_list.add_widget(ditem)
+
+            # XP card
+            if "char_xp_list" in home.ids:
+                try:
+                    home.ids.char_xp_total.text = "—"
+                except Exception:
+                    pass
+                try:
+                    home.ids.char_xp_list.clear_widgets()
+                    xitem = OneLineIconListItem(text="Sem dados.")
+                    xitem.add_widget(IconLeftWidget(icon="chart-line"))
+                    home.ids.char_xp_list.add_widget(xitem)
+                except Exception:
+                    pass
             return
 
         if "char_status" in home.ids:
@@ -1122,6 +1151,10 @@ class TibiaToolsApp(MDApp):
         guild = payload.get("guild") or {}
         houses = payload.get("houses") or []
         deaths = payload.get("deaths", [])
+
+        # XP 30 dias (GuildStats)
+        exp_rows_30 = payload.get("exp_rows_30") or []
+        exp_total_30 = payload.get("exp_total_30")
 
         try:
             home._last_char_payload = payload
@@ -1176,6 +1209,20 @@ class TibiaToolsApp(MDApp):
             add_one(f"Level: {level}", "signal")
             add_one(f"World: {world}", "earth")
 
+            # XP últimos 30 dias (se disponível)
+            def fmt_pt(n: int) -> str:
+                try:
+                    s = f"{abs(int(n)):,}".replace(",", ".")
+                except Exception:
+                    s = str(n)
+                return ("-" if int(n) < 0 else "+") + s
+
+            if isinstance(exp_total_30, (int, float)):
+                add_one(f"XP (30 dias): {fmt_pt(int(exp_total_30))}", "chart-line")
+            else:
+                # não poluir demais; mostra apenas quando houver histórico
+                pass
+
             # Guild (evita cortar demais; toque para ver completo)
             gname = str(guild.get("name") or "").strip() if isinstance(guild, dict) else ""
             grank = str(guild.get("rank") or "").strip() if isinstance(guild, dict) else ""
@@ -1197,6 +1244,42 @@ class TibiaToolsApp(MDApp):
             else:
                 full_h = "\n".join(houses_list)
                 add_two("Houses", f"{len(houses_list)} casas", "home", "Houses", full_h)
+
+            # ----------------------------
+            # XP últimos ~30 dias (card)
+            # ----------------------------
+            if "char_xp_list" in home.ids:
+                try:
+                    xlist = home.ids.char_xp_list
+                    xlist.clear_widgets()
+
+                    if isinstance(exp_total_30, (int, float)) and exp_rows_30:
+                        total_txt = f"Total: {fmt_pt(int(exp_total_30))} XP (últimos 30 dias)"
+                    else:
+                        total_txt = "Sem histórico de XP disponível (GuildStats)."
+                    try:
+                        home.ids.char_xp_total.text = total_txt
+                    except Exception:
+                        pass
+
+                    if not exp_rows_30:
+                        it = OneLineIconListItem(text="Sem dados para este char.")
+                        it.add_widget(IconLeftWidget(icon="chart-line"))
+                        xlist.add_widget(it)
+                    else:
+                        for r in exp_rows_30[:30]:
+                            ds = str(r.get("date") or "").strip()
+                            try:
+                                val = int(r.get("exp_change_int") or 0)
+                            except Exception:
+                                continue
+                            sec = f"{fmt_pt(val)} XP"
+                            icon = "trending-up" if val >= 0 else "trending-down"
+                            it = TwoLineIconListItem(text=ds, secondary_text=sec)
+                            it.add_widget(IconLeftWidget(icon=icon))
+                            xlist.add_widget(it)
+                except Exception:
+                    pass
 
             dlist = home.ids.char_deaths_list
             dlist.clear_widgets()
@@ -1226,6 +1309,48 @@ class TibiaToolsApp(MDApp):
                 ditem = OneLineIconListItem(text="Sem mortes recentes (ou sem dados).")
                 ditem.add_widget(IconLeftWidget(icon="skull-outline"))
                 dlist.add_widget(ditem)
+
+            # ----------------------------
+            # Card: XP últimos 30 dias
+            # ----------------------------
+            if "char_xp_list" in home.ids:
+                try:
+                    xlist = home.ids.char_xp_list
+                    xlist.clear_widgets()
+
+                    if isinstance(exp_total_30, (int, float)) and exp_rows_30:
+                        home.ids.char_xp_total.text = f"Total: {fmt_pt(int(exp_total_30))} XP (últimos 30 dias)"
+                        home.ids.char_xp_total.theme_text_color = "Primary"
+                    else:
+                        home.ids.char_xp_total.text = "Sem histórico de XP no GuildStats para esse char."
+                        home.ids.char_xp_total.theme_text_color = "Hint"
+
+                    rows = exp_rows_30 if isinstance(exp_rows_30, list) else []
+                    if not rows:
+                        it = OneLineIconListItem(text="Sem dados.")
+                        it.add_widget(IconLeftWidget(icon="chart-line"))
+                        xlist.add_widget(it)
+                    else:
+                        # Mostra até 30 dias (mais recentes primeiro)
+                        for r in rows[:30]:
+                            ds = str(r.get("date") or "").strip()
+                            ev = r.get("exp_change_int")
+                            try:
+                                ev_i = int(ev)
+                            except Exception:
+                                continue
+                            sec = f"{fmt_pt(ev_i)} XP"
+                            icon = "trending-up" if ev_i >= 0 else "trending-down"
+                            item = TwoLineIconListItem(text=ds, secondary_text=sec)
+                            item.add_widget(IconLeftWidget(icon=icon))
+
+                            # cor do secundário (verde/vermelho)
+                            item.secondary_theme_text_color = "Custom"
+                            item.secondary_text_color = (0.18, 0.8, 0.44, 1) if ev_i >= 0 else (0.9, 0.3, 0.24, 1)
+
+                            xlist.add_widget(item)
+                except Exception:
+                    pass
             return
 
         # Fallback antigo (se ainda existir)
@@ -1252,6 +1377,7 @@ class TibiaToolsApp(MDApp):
 
         self._char_set_loading(home, name)
         home.char_last_url = ""
+        home.char_xp_source_url = ""
 
         def worker():
             try:
@@ -1328,6 +1454,43 @@ class TibiaToolsApp(MDApp):
                 if not isinstance(deaths, list):
                     deaths = []
 
+                # ----------------------------
+                # XP últimos ~30 dias (GuildStats tab=9)
+                # ----------------------------
+                gs_exp_url = f"https://guildstats.eu/character?nick={requests.utils.quote_plus(title or name)}&tab=9"
+                exp_rows_30 = []
+                exp_total_30 = None
+                try:
+                    rows = fetch_guildstats_exp_changes(title or name)
+                    if rows:
+                        # referência: data mais recente da tabela (nem sempre é 'hoje')
+                        dates = []
+                        for r in rows:
+                            ds = str(r.get("date") or "")
+                            try:
+                                dates.append(datetime.fromisoformat(ds).date())
+                            except Exception:
+                                pass
+                        ref = max(dates) if dates else datetime.utcnow().date()
+                        cutoff = ref - timedelta(days=30)
+
+                        # filtra e ordena por data desc
+                        for r in rows:
+                            ds = str(r.get("date") or "")
+                            try:
+                                d = datetime.fromisoformat(ds).date()
+                            except Exception:
+                                continue
+                            if d < cutoff:
+                                continue
+                            exp_rows_30.append(r)
+
+                        exp_rows_30.sort(key=lambda x: x.get("date", ""), reverse=True)
+                        exp_total_30 = int(sum(int(r.get("exp_change_int") or 0) for r in exp_rows_30))
+                except Exception:
+                    exp_rows_30 = []
+                    exp_total_30 = None
+
                 # XP lost por morte:
                 # 1) tenta GuildStats (fansite) por ordem (mais recente -> mais recente)
                 # 2) se falhar/bloquear, calcula a estimativa offline (igual GuildStats: promoted + 7 blessings)
@@ -1371,6 +1534,11 @@ class TibiaToolsApp(MDApp):
                     "guild_line": guild_line,
                     "house_line": house_line,
                     "deaths": deaths,
+
+                    # XP 30 dias (GuildStats)
+                    "exp_rows_30": exp_rows_30,
+                    "exp_total_30": exp_total_30,
+                    "gs_exp_url": gs_exp_url,
                 }
                 return True, payload, url
             except Exception as e:
@@ -1379,6 +1547,13 @@ class TibiaToolsApp(MDApp):
         def done(res):
             ok, payload_or_msg, url = res
             home.char_last_url = url
+            try:
+                if ok and isinstance(payload_or_msg, dict):
+                    home.char_xp_source_url = str(payload_or_msg.get("gs_exp_url") or "")
+                else:
+                    home.char_xp_source_url = ""
+            except Exception:
+                home.char_xp_source_url = ""
 
             if ok:
                 self._char_show_result(home, payload_or_msg)
@@ -1403,6 +1578,15 @@ class TibiaToolsApp(MDApp):
     def open_last_in_browser(self):
         home = self.root.get_screen("home")
         url = getattr(home, "char_last_url", "") or ""
+        if not url:
+            self.toast("Sem link ainda. Faça uma busca primeiro.")
+            return
+        webbrowser.open(url)
+
+    def open_char_xp_source(self):
+        """Abre a fonte do histórico de XP (GuildStats tab=9) no navegador."""
+        home = self.root.get_screen("home")
+        url = getattr(home, "char_xp_source_url", "") or ""
         if not url:
             self.toast("Sem link ainda. Faça uma busca primeiro.")
             return
