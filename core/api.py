@@ -301,86 +301,172 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
     Observação: é um complemento (fansite). Se falhar, devolve lista vazia.
     """
     try:
-        safe = quote_plus(name)
-        base_url = GUILDSTATS_EXP_URL.format(name=safe)
+        # O GuildStats é um fansite e pode variar o HTML (às vezes sem <th> no cabeçalho).
+        # Aqui tentamos ser tolerantes: buscamos a tabela "Date / Exp change" por padrão de linhas,
+        # não apenas por texto do cabeçalho.
+
+        # Alguns chars só respondem bem com %20 (quote) em vez de + (quote_plus).
+        enc_quote = quote(name, safe="")
+        enc_plus = quote_plus(name)
+
+        url_variants = [
+            GUILDSTATS_EXP_URL.format(name=enc_quote),
+            GUILDSTATS_EXP_URL.format(name=enc_plus),
+        ]
+
+        # headers um pouco mais "browser-like" para reduzir bloqueios.
+        headers = dict(UA)
+        headers.update({
+            "Referer": "https://guildstats.eu/",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        })
 
         def fetch_html(u: str) -> str:
             try:
-                r = requests.get(u, timeout=timeout, headers=UA)
+                r = requests.get(u, timeout=timeout, headers=headers)
                 if r.status_code != 200:
                     return ""
-                return r.text or ""
+                txt = r.text or ""
+                # Detecta páginas de bloqueio/anti-bot (para não tentar parsear "lixo").
+                low = txt.lower()
+                if "checking your browser" in low or "cloudflare" in low or "enable javascript" in low:
+                    return ""
+                return txt
             except Exception:
                 return ""
 
         html = ""
-        for u in (base_url, base_url + "&lang=pt", base_url + "&lang=en"):
-            html = fetch_html(u)
+        # Tenta sem idioma e com pt/en (algumas páginas mudam layout/texto com lang)
+        for base_url in url_variants:
+            for u in (base_url, base_url + "&lang=pt", base_url + "&lang=en"):
+                html = fetch_html(u)
+                if html:
+                    break
             if html:
                 break
+
         if not html:
             return []
 
         soup = BeautifulSoup(html, "html.parser")
-
-        def norm(s: str) -> str:
-            return re.sub(r"\s+", " ", (s or "").strip()).lower()
 
         def parse_exp_to_int(s: str) -> Optional[int]:
             # exemplos: "+33,820,426" | "-55,947,218" | "0" | "+200,710,181 👍"
             txt = (s or "").strip()
             if not txt:
                 return None
-            sign = -1 if "-" in txt else 1
-            m = re.findall(r"\d+", txt.replace("\u00a0", " "))
+            # Normaliza NBSP e tenta achar um número.
+            t = txt.replace("\u00a0", " ")
+            # pega primeiro bloco numérico e sinal se existir no começo
+            m = re.search(r"([+-])?\s*(\d[\d\s,\.]*)", t)
             if not m:
                 return None
-            num = int("".join(m))
-            return sign * num
+            sign_ch = m.group(1)
+            digits = re.findall(r"\d+", m.group(2) or "")
+            if not digits:
+                return None
+            num = int("".join(digits))
+            return -num if sign_ch == "-" else num
 
-        # Achar a tabela correta:
-        # - headers contendo "date" e "exp"+"change"
+        date_re = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+
+        # Heurística robusta: escolhe a tabela em que muitas linhas possuem uma data ISO
+        # e alguma coluna com valores grandes e frequentemente prefixados com +/-. 
         best = None  # (table, date_idx, exp_idx, score)
+
         for table in soup.find_all("table"):
-            header_tr = None
+            rows = []
+            max_cols = 0
             for tr in table.find_all("tr"):
-                ths = tr.find_all("th")
-                if ths:
-                    header_tr = tr
-                    break
-            if not header_tr:
+                cells = tr.find_all(["td", "th"])
+                if not cells:
+                    continue
+                row = [re.sub(r"\s+", " ", (c.get_text(" ", strip=True) or "")).strip() for c in cells]
+                if not row:
+                    continue
+                rows.append(row)
+                max_cols = max(max_cols, len(row))
+
+            if not rows or max_cols < 2:
                 continue
 
-            headers = [norm(th.get_text(" ", strip=True)) for th in header_tr.find_all("th")]
-            if not headers:
+            # normaliza linhas para mesmo tamanho
+            norm_rows = [r + [""] * (max_cols - len(r)) for r in rows]
+
+            # conta datas por coluna
+            date_counts = [0] * max_cols
+            for r in norm_rows:
+                for ci, v in enumerate(r):
+                    if date_re.search(v or ""):
+                        date_counts[ci] += 1
+
+            date_idx = max(range(max_cols), key=lambda i: date_counts[i])
+            # Alguns chars podem ter poucos registros (tracking recente).
+            if date_counts[date_idx] < 3:
                 continue
 
-            date_idx = None
-            exp_idx = None
-            for i, h in enumerate(headers):
-                if h == "date" or h.startswith("date") or h == "data" or h.startswith("data"):
-                    date_idx = i
-                if "exp" in h and ("change" in h or "gain" in h or "difference" in h or "mud" in h):
-                    exp_idx = i
-                # alguns layouts usam "Exp change" exatamente
-                if h.replace(" ", "") in ("expchange", "expchange(\u0394)"):
-                    exp_idx = i
+            # pontua colunas de EXP
+            col_scores = []
+            for ci in range(max_cols):
+                if ci == date_idx:
+                    col_scores.append((-1, ci))
+                    continue
+                exp_count = 0
+                plusminus = 0
+                abs_sum = 0
+                max_abs = 0
+                zero_count = 0
+                for r in norm_rows:
+                    if not date_re.search(r[date_idx] or ""):
+                        continue
+                    v = (r[ci] or "").strip()
+                    if not v:
+                        continue
+                    exp_int = parse_exp_to_int(v)
+                    if exp_int is None:
+                        continue
+                    exp_count += 1
+                    ai = abs(int(exp_int))
+                    abs_sum += ai
+                    max_abs = max(max_abs, ai)
+                    if int(exp_int) == 0:
+                        zero_count += 1
+                    if v.lstrip().startswith(("+", "-")):
+                        plusminus += 1
 
-            if date_idx is None or exp_idx is None:
+                if exp_count < 3:
+                    col_scores.append((-1, ci))
+                    continue
+
+                avg_abs = abs_sum / float(exp_count) if exp_count else 0.0
+
+                # Evita confundir com colunas pequenas (lvl/rank) — normalmente exp change tem valores grandes,
+                # mas também pode ter muitos "0". A coluna "Experience" (total) tem valores enormes e SEM +/-. 
+                if plusminus > 0:
+                    if avg_abs < 10_000:
+                        col_scores.append((-1, ci))
+                        continue
+                    # score: +/− domina completamente (senão a coluna "Experience" ganha pelo tamanho).
+                    score = (plusminus * 1_000_000) + (exp_count * 1000) + min(avg_abs, 1_000_000_000) / 1_000_000_000
+                else:
+                    # Sem sinais: aceitaremos apenas se os valores não forem absurdamente grandes
+                    # (para não pegar a coluna "Experience"). Também damos bônus se for muito "0".
+                    if max_abs > 5_000_000:
+                        col_scores.append((-1, ci))
+                        continue
+                    zero_ratio = (zero_count / float(exp_count)) if exp_count else 0.0
+                    score = (exp_count * 1000) + (zero_ratio * 500) + (5_000_000 - max_abs) / 10_000
+                col_scores.append((score, ci))
+
+            best_col = max(col_scores, key=lambda x: x[0])
+            if best_col[0] < 0:
                 continue
+            exp_idx = best_col[1]
 
-            # pontua para preferir a tabela certa
-            score = 0
-            joined = " ".join(headers)
-            if "lvl" in joined or "level" in joined:
-                score += 1
-            if "experience" in joined or "exp" in joined:
-                score += 1
-            if "time" in joined and "online" in joined:
-                score += 1
-
-            if best is None or score > best[3]:
-                best = (table, date_idx, exp_idx, score)
+            table_score = date_counts[date_idx] + best_col[0]
+            if best is None or table_score > best[3]:
+                best = (table, date_idx, exp_idx, table_score)
 
         if not best:
             return []
@@ -389,22 +475,19 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
 
         out: List[Dict[str, Any]] = []
         for tr in table.find_all("tr"):
-            tds = tr.find_all("td")
-            if not tds:
+            cells = tr.find_all(["td", "th"])
+            if not cells:
                 continue
-            if date_idx >= len(tds) or exp_idx >= len(tds):
+            vals = [re.sub(r"\s+", " ", (c.get_text(" ", strip=True) or "")).strip() for c in cells]
+            if date_idx >= len(vals) or exp_idx >= len(vals):
                 continue
 
-            date_txt = tds[date_idx].get_text(" ", strip=True)
-            exp_txt = tds[exp_idx].get_text(" ", strip=True)
-
-            date_txt = re.sub(r"\s+", " ", (date_txt or "")).strip()
-            exp_txt = re.sub(r"\s+", " ", (exp_txt or "")).strip()
+            date_txt = vals[date_idx]
+            exp_txt = vals[exp_idx]
             if not date_txt or not exp_txt:
                 continue
 
-            # normaliza data para YYYY-MM-DD (GuildStats usa ISO)
-            m = re.search(r"(\d{4}-\d{2}-\d{2})", date_txt)
+            m = date_re.search(date_txt)
             if not m:
                 continue
             date_iso = m.group(1)
@@ -416,7 +499,7 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
             out.append({
                 "date": date_iso,
                 "exp_change": exp_txt,
-                "exp_change_int": exp_int,
+                "exp_change_int": int(exp_int),
             })
 
         return out

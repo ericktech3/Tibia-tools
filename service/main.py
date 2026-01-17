@@ -42,6 +42,11 @@ def import_core_modules() -> Tuple[Any, Any, str]:
 def _android_notify(title: str, text: str, notif_id: int = 1002):
     try:
         from jnius import autoclass
+        # Intent para abrir o app ao tocar na notificação
+        Intent = autoclass("android.content.Intent")
+        PendingIntent = autoclass("android.app.PendingIntent")
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        VERSION = autoclass("android.os.Build$VERSION")
         Context = autoclass("android.content.Context")
         NotificationChannel = autoclass("android.app.NotificationChannel")
         NotificationManager = autoclass("android.app.NotificationManager")
@@ -59,6 +64,25 @@ def _android_notify(title: str, text: str, notif_id: int = 1002):
         builder.setContentTitle(title)
         builder.setContentText(text)
         builder.setSmallIcon(service.getApplicationInfo().icon)
+
+        # Abre o app ao clicar (em alguns devices, sem isso o toque não faz nada)
+        try:
+            intent = Intent(service, PythonActivity)
+            try:
+                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            except Exception:
+                pass
+            pi_flags = int(PendingIntent.FLAG_UPDATE_CURRENT)
+            try:
+                if int(VERSION.SDK_INT) >= 23:
+                    # Em Android 12+ o sistema exige flag explícita; usamos IMMUTABLE.
+                    pi_flags = pi_flags | int(PendingIntent.FLAG_IMMUTABLE)
+            except Exception:
+                pass
+            pi = PendingIntent.getActivity(service, int(notif_id), intent, pi_flags)
+            builder.setContentIntent(pi)
+        except Exception:
+            pass
         try:
             builder.setAutoCancel(True)
         except Exception:
@@ -73,6 +97,10 @@ def _android_start_foreground(title: str, text: str, notif_id: int = 1001):
     """
     try:
         from jnius import autoclass
+        Intent = autoclass("android.content.Intent")
+        PendingIntent = autoclass("android.app.PendingIntent")
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        VERSION = autoclass("android.os.Build$VERSION")
         Context = autoclass("android.content.Context")
         NotificationChannel = autoclass("android.app.NotificationChannel")
         NotificationManager = autoclass("android.app.NotificationManager")
@@ -91,6 +119,24 @@ def _android_start_foreground(title: str, text: str, notif_id: int = 1001):
         builder.setContentTitle(title)
         builder.setContentText(text)
         builder.setSmallIcon(service.getApplicationInfo().icon)
+
+        # Mantém o mesmo comportamento: abrir o app ao tocar
+        try:
+            intent = Intent(service, PythonActivity)
+            try:
+                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            except Exception:
+                pass
+            pi_flags = int(PendingIntent.FLAG_UPDATE_CURRENT)
+            try:
+                if int(VERSION.SDK_INT) >= 23:
+                    pi_flags = pi_flags | int(PendingIntent.FLAG_IMMUTABLE)
+            except Exception:
+                pass
+            pi = PendingIntent.getActivity(service, int(notif_id), intent, pi_flags)
+            builder.setContentIntent(pi)
+        except Exception:
+            pass
         try:
             builder.setOngoing(True)
         except Exception:

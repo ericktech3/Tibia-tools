@@ -1333,7 +1333,8 @@ class TibiaToolsApp(MDApp):
                 # ----------------------------
                 # XP últimos ~30 dias (GuildStats tab=9)
                 # ----------------------------
-                gs_exp_url = f"https://guildstats.eu/character?nick={urllib.parse.quote_plus(title or name)}&tab=9"
+                # Preferimos %20 (quote) — em alguns casos o GuildStats não responde bem com "+".
+                gs_exp_url = f"https://guildstats.eu/character?nick={urllib.parse.quote((title or name), safe='')}&tab=9"
                 exp_rows_30 = []
                 exp_total_30 = None
                 try:
