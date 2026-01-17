@@ -160,6 +160,11 @@ class TibiaToolsApp(MDApp):
         Aqui fazemos o check + request via Activity.requestPermissions (JNI), e re-tentamos com throttle.
         """
         try:
+            # Se o app foi aberto por toque em uma notificação do service,
+            # processa os extras e navega (Home/Favoritos/Char).
+            Clock.schedule_once(self._handle_notification_intent, 0.6)
+            Clock.schedule_once(self._handle_notification_intent, 1.4)
+
             if not self._is_android():
                 return
             if self._android_sdk_int() < 33:
@@ -181,6 +186,18 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
+    def on_resume(self):
+        """Chamado quando o app volta para o foreground.
+
+        Importante para quando o usuário toca uma notificação com o app já aberto.
+        """
+        try:
+            Clock.schedule_once(self._handle_notification_intent, 0.2)
+            Clock.schedule_once(self._handle_notification_intent, 0.8)
+        except Exception:
+            pass
+        return True
+
     def go(self, screen_name: str):
         sm = self.root
         if isinstance(sm, ScreenManager) and screen_name in sm.screen_names:
@@ -196,6 +213,73 @@ class TibiaToolsApp(MDApp):
             home = self.root.get_screen("home")
             if "bottom_nav" in home.ids:
                 home.ids.bottom_nav.switch_tab(tab_name)
+        except Exception:
+            pass
+
+    # --------------------
+    # Android: abrir tela ao tocar na notificação
+    # --------------------
+    def _handle_notification_intent(self, *_):
+        """Se o app foi aberto via notificação do service, navega para a tela correta.
+
+        Extras esperados:
+          - tt_open: "fav" | "char"
+          - tt_char: nome do personagem (opcional)
+          - tt_event: "online" | "level" | "death" (opcional)
+        """
+        if not self._is_android():
+            return
+        try:
+            from jnius import autoclass  # type: ignore
+
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            activity = PythonActivity.mActivity
+            intent = activity.getIntent()
+            if intent is None:
+                return
+
+            tt_open = intent.getStringExtra("tt_open")
+            if not tt_open:
+                return
+            tt_open = str(tt_open)
+
+            tt_char = intent.getStringExtra("tt_char")
+            tt_char = str(tt_char) if tt_char else ""
+            tt_event = intent.getStringExtra("tt_event")
+            tt_event = str(tt_event) if tt_event else ""
+
+            # Limpa para não reprocessar no próximo on_resume
+            try:
+                intent.removeExtra("tt_open")
+                intent.removeExtra("tt_char")
+                intent.removeExtra("tt_event")
+                activity.setIntent(intent)
+            except Exception:
+                pass
+
+            # Navegação
+            self.go("home")
+            if tt_open == "fav":
+                self.select_home_tab("tab_fav")
+            elif tt_open == "char":
+                self.select_home_tab("tab_char")
+                if tt_char:
+                    try:
+                        home = self.root.get_screen("home")
+                        home.ids.char_name.text = tt_char
+                    except Exception:
+                        pass
+                    # chama a busca após o tab/ids estarem prontos
+                    Clock.schedule_once(lambda *_: self.search_character(), 0.2)
+
+            # Feedback opcional
+            if tt_event and tt_char:
+                if tt_event == "online":
+                    self.toast(f"{tt_char} ficou ONLINE")
+                elif tt_event == "level":
+                    self.toast(f"{tt_char} upou level")
+                elif tt_event == "death":
+                    self.toast(f"{tt_char} morreu")
         except Exception:
             pass
 
