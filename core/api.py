@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 import re
+from urllib.parse import quote, quote_plus
 
 import requests
 from bs4 import BeautifulSoup
@@ -72,7 +73,7 @@ def fetch_worlds(timeout: int = 12) -> List[str]:
 
 def fetch_character_tibiadata(name: str, timeout: int = 12) -> Dict[str, Any]:
     """JSON completo do endpoint /v4/character/{name}."""
-    safe_name = requests.utils.quote(name)
+    safe_name = quote(name)
     return _get_json(CHAR_URL.format(name=safe_name), timeout)
 
 
@@ -94,7 +95,7 @@ def fetch_character_snapshot(name: str, timeout: int = 12) -> Dict[str, Any]:
         "level": ch.get("level"),
         "vocation": ch.get("vocation"),
         "status": ch.get("status"),
-        "url": f"https://www.tibia.com/community/?subtopic=characters&name={requests.utils.quote(name)}",
+        "url": f"https://www.tibia.com/community/?subtopic=characters&name={quote(name)}",
     }
 
 
@@ -128,7 +129,7 @@ def is_character_online_tibiadata(name: str, world: Optional[str] = None, timeou
             return False
 
         # Com world: checa lista de online players do mundo
-        safe_world = requests.utils.quote(str(world).strip())
+        safe_world = quote(str(world).strip())
         url = f"https://api.tibiadata.com/v4/world/{safe_world}"
         data = _get_json(url, timeout=timeout)
 
@@ -164,7 +165,7 @@ def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> O
     """
     _ = world  # mantemos o parâmetro por compatibilidade
     try:
-        safe_name = requests.utils.quote_plus(str(name))
+        safe_name = quote_plus(str(name))
         url = TIBIA_CHAR_URL.format(name=safe_name)
         r = requests.get(url, timeout=timeout, headers=UA)
         r.raise_for_status()
@@ -197,7 +198,7 @@ def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
     """
     try:
         # Em query-string, preferimos + para espaços.
-        safe = requests.utils.quote_plus(name)
+        safe = quote_plus(name)
         base_url = GUILDSTATS_DEATHS_URL.format(name=safe)
 
         def fetch_html(u: str) -> str:
@@ -300,7 +301,7 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
     Observação: é um complemento (fansite). Se falhar, devolve lista vazia.
     """
     try:
-        safe = requests.utils.quote_plus(name)
+        safe = quote_plus(name)
         base_url = GUILDSTATS_EXP_URL.format(name=safe)
 
         def fetch_html(u: str) -> str:
@@ -357,22 +358,25 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
             date_idx = None
             exp_idx = None
             for i, h in enumerate(headers):
-                if h == "date" or h.startswith("date") or "data" == h or h.startswith("data"):
+                if h == "date" or h.startswith("date") or h == "data" or h.startswith("data"):
                     date_idx = i
-                if ("exp" in h) and ("change" in h or "mudan" in h or "varia" in h):
+                if "exp" in h and ("change" in h or "gain" in h or "difference" in h or "mud" in h):
+                    exp_idx = i
+                # alguns layouts usam "Exp change" exatamente
+                if h.replace(" ", "") in ("expchange", "expchange(\u0394)"):
                     exp_idx = i
 
             if date_idx is None or exp_idx is None:
                 continue
 
-            # heurística: essa tabela também costuma ter "experience" e "time on-line"
+            # pontua para preferir a tabela certa
             score = 0
             joined = " ".join(headers)
-            if "experience" in joined:
+            if "lvl" in joined or "level" in joined:
                 score += 1
-            if "time" in joined and "on" in joined:
+            if "experience" in joined or "exp" in joined:
                 score += 1
-            if "avg" in joined and "hour" in joined:
+            if "time" in joined and "online" in joined:
                 score += 1
 
             if best is None or score > best[3]:
@@ -388,22 +392,30 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
             tds = tr.find_all("td")
             if not tds:
                 continue
-            if max(date_idx, exp_idx) >= len(tds):
+            if date_idx >= len(tds) or exp_idx >= len(tds):
                 continue
 
-            date_s = re.sub(r"\s+", " ", tds[date_idx].get_text(" ", strip=True) or "").strip()
-            exp_s = re.sub(r"\s+", " ", tds[exp_idx].get_text(" ", strip=True) or "").strip()
+            date_txt = tds[date_idx].get_text(" ", strip=True)
+            exp_txt = tds[exp_idx].get_text(" ", strip=True)
 
-            # date geralmente é YYYY-MM-DD
-            if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_s):
+            date_txt = re.sub(r"\s+", " ", (date_txt or "")).strip()
+            exp_txt = re.sub(r"\s+", " ", (exp_txt or "")).strip()
+            if not date_txt or not exp_txt:
                 continue
-            exp_int = parse_exp_to_int(exp_s)
+
+            # normaliza data para YYYY-MM-DD (GuildStats usa ISO)
+            m = re.search(r"(\d{4}-\d{2}-\d{2})", date_txt)
+            if not m:
+                continue
+            date_iso = m.group(1)
+
+            exp_int = parse_exp_to_int(exp_txt)
             if exp_int is None:
                 continue
 
             out.append({
-                "date": date_s,
-                "exp_change": exp_s,
+                "date": date_iso,
+                "exp_change": exp_txt,
                 "exp_change_int": exp_int,
             })
 

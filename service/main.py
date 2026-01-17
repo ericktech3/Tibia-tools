@@ -39,48 +39,7 @@ def import_core_modules() -> Tuple[Any, Any, str]:
             last_err = e
     raise last_err or RuntimeError("Falha ao importar core/Core")
 
-def _build_launch_pending_intent(service, extras: Optional[Dict[str, str]] = None, request_code: int = 0):
-    """Cria um PendingIntent que abre o app (PythonActivity) quando o usuário tocar na notificação."""
-    try:
-        from jnius import autoclass
-        Intent = autoclass("android.content.Intent")
-        PendingIntent = autoclass("android.app.PendingIntent")
-        BuildVersion = autoclass("android.os.Build$VERSION")
-
-        # Launch intent do app
-        pm = service.getPackageManager()
-        intent = pm.getLaunchIntentForPackage(service.getPackageName())
-        if intent is None:
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            intent = Intent(service, PythonActivity)
-
-        intent.setFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK
-            | Intent.FLAG_ACTIVITY_CLEAR_TOP
-            | Intent.FLAG_ACTIVITY_SINGLE_TOP
-        )
-
-        if isinstance(extras, dict):
-            for k, v in extras.items():
-                try:
-                    intent.putExtra(str(k), str(v))
-                except Exception:
-                    pass
-
-        flags = int(PendingIntent.FLAG_UPDATE_CURRENT)
-        # Android 12+ exige immutable/mutable; usamos immutable (não precisamos mutar no receiver)
-        try:
-            if int(BuildVersion.SDK_INT) >= 23 and hasattr(PendingIntent, "FLAG_IMMUTABLE"):
-                flags |= int(PendingIntent.FLAG_IMMUTABLE)
-        except Exception:
-            pass
-
-        return PendingIntent.getActivity(service, int(request_code), intent, flags)
-    except Exception:
-        return None
-
-
-def _android_notify(title: str, text: str, notif_id: int = 1002, extras: Optional[Dict[str, str]] = None):
+def _android_notify(title: str, text: str, notif_id: int = 1002):
     try:
         from jnius import autoclass
         Context = autoclass("android.content.Context")
@@ -100,13 +59,6 @@ def _android_notify(title: str, text: str, notif_id: int = 1002, extras: Optiona
         builder.setContentTitle(title)
         builder.setContentText(text)
         builder.setSmallIcon(service.getApplicationInfo().icon)
-        # Toque na notificação -> abre o app
-        pi = _build_launch_pending_intent(service, extras=extras, request_code=notif_id)
-        if pi is not None:
-            try:
-                builder.setContentIntent(pi)
-            except Exception:
-                pass
         try:
             builder.setAutoCancel(True)
         except Exception:
@@ -139,17 +91,6 @@ def _android_start_foreground(title: str, text: str, notif_id: int = 1001):
         builder.setContentTitle(title)
         builder.setContentText(text)
         builder.setSmallIcon(service.getApplicationInfo().icon)
-        # Toque na notificação fixa -> abre Favoritos
-        pi = _build_launch_pending_intent(
-            service,
-            extras={"tt_open": "fav"},
-            request_code=notif_id,
-        )
-        if pi is not None:
-            try:
-                builder.setContentIntent(pi)
-            except Exception:
-                pass
         try:
             builder.setOngoing(True)
         except Exception:
@@ -289,21 +230,11 @@ def main():
 
                     if notify_online and (not prev_online) and online:
                         nid = 1000 + (abs(hash(f"online:{ln}")) % 50000)
-                        _android_notify(
-                            "Favorito online",
-                            f"{name} está ONLINE",
-                            notif_id=nid,
-                            extras={"tt_open": "char", "tt_char": name, "tt_event": "online"},
-                        )
+                        _android_notify("Favorito online", f"{name} está ONLINE", notif_id=nid)
 
                     if notify_level and (prev_level is not None) and (level is not None) and level > prev_level:
                         nid = 1000 + (abs(hash(f"level:{ln}")) % 50000)
-                        _android_notify(
-                            "Level up",
-                            f"{name} agora é level {level}",
-                            notif_id=nid,
-                            extras={"tt_open": "char", "tt_char": name, "tt_event": "level"},
-                        )
+                        _android_notify("Level up", f"{name} agora é level {level}", notif_id=nid)
 
                     if notify_death and isinstance(death_time, str) and death_time and death_time != prev_death_time:
                         try:
@@ -314,12 +245,7 @@ def main():
                         if summary:
                             msg += f" ({summary})"
                         nid = 1000 + (abs(hash(f"death:{ln}:{death_time}")) % 50000)
-                        _android_notify(
-                            "Morte",
-                            msg,
-                            notif_id=nid,
-                            extras={"tt_open": "char", "tt_char": name, "tt_event": "death"},
-                        )
+                        _android_notify("Morte", msg, notif_id=nid)
 
                 # update persisted last state
                 last[ln] = {

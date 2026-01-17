@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional, Set, List, Tuple
 import requests
+from urllib.parse import quote
 
 TIBIADATA_CHAR = "https://api.tibiadata.com/v4/character/{name}"
 TIBIADATA_WORLD = "https://api.tibiadata.com/v4/world/{world}"
@@ -7,7 +8,7 @@ TIBIADATA_WORLD = "https://api.tibiadata.com/v4/world/{world}"
 _UA = {"User-Agent": "TibiaToolsAndroid/0.3"}
 
 def fetch_character_raw(name: str, timeout: int = 12) -> Dict[str, Any]:
-    url = TIBIADATA_CHAR.format(name=requests.utils.quote(str(name)))
+    url = TIBIADATA_CHAR.format(name=quote(str(name)))
     r = requests.get(url, timeout=timeout, headers=_UA)
     r.raise_for_status()
     return r.json() if r.text else {}
@@ -27,7 +28,7 @@ def fetch_character_world(name: str, timeout: int = 12) -> Optional[str]:
 def fetch_world_online_players(world: str, timeout: int = 12) -> Optional[Set[str]]:
     """Returns a set of lowercase names currently online on a world."""
     try:
-        safe_world = requests.utils.quote(str(world).strip())
+        safe_world = quote(str(world).strip())
         url = TIBIADATA_WORLD.format(world=safe_world)
         r = requests.get(url, timeout=timeout, headers=_UA)
         r.raise_for_status()

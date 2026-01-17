@@ -161,11 +161,6 @@ class TibiaToolsApp(MDApp):
         Aqui fazemos o check + request via Activity.requestPermissions (JNI), e re-tentamos com throttle.
         """
         try:
-            # Se o app foi aberto por toque em uma notificação do service,
-            # processa os extras e navega (Home/Favoritos/Char).
-            Clock.schedule_once(self._handle_notification_intent, 0.6)
-            Clock.schedule_once(self._handle_notification_intent, 1.4)
-
             if not self._is_android():
                 return
             if self._android_sdk_int() < 33:
@@ -187,18 +182,6 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
-    def on_resume(self):
-        """Chamado quando o app volta para o foreground.
-
-        Importante para quando o usuário toca uma notificação com o app já aberto.
-        """
-        try:
-            Clock.schedule_once(self._handle_notification_intent, 0.2)
-            Clock.schedule_once(self._handle_notification_intent, 0.8)
-        except Exception:
-            pass
-        return True
-
     def go(self, screen_name: str):
         sm = self.root
         if isinstance(sm, ScreenManager) and screen_name in sm.screen_names:
@@ -214,73 +197,6 @@ class TibiaToolsApp(MDApp):
             home = self.root.get_screen("home")
             if "bottom_nav" in home.ids:
                 home.ids.bottom_nav.switch_tab(tab_name)
-        except Exception:
-            pass
-
-    # --------------------
-    # Android: abrir tela ao tocar na notificação
-    # --------------------
-    def _handle_notification_intent(self, *_):
-        """Se o app foi aberto via notificação do service, navega para a tela correta.
-
-        Extras esperados:
-          - tt_open: "fav" | "char"
-          - tt_char: nome do personagem (opcional)
-          - tt_event: "online" | "level" | "death" (opcional)
-        """
-        if not self._is_android():
-            return
-        try:
-            from jnius import autoclass  # type: ignore
-
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            activity = PythonActivity.mActivity
-            intent = activity.getIntent()
-            if intent is None:
-                return
-
-            tt_open = intent.getStringExtra("tt_open")
-            if not tt_open:
-                return
-            tt_open = str(tt_open)
-
-            tt_char = intent.getStringExtra("tt_char")
-            tt_char = str(tt_char) if tt_char else ""
-            tt_event = intent.getStringExtra("tt_event")
-            tt_event = str(tt_event) if tt_event else ""
-
-            # Limpa para não reprocessar no próximo on_resume
-            try:
-                intent.removeExtra("tt_open")
-                intent.removeExtra("tt_char")
-                intent.removeExtra("tt_event")
-                activity.setIntent(intent)
-            except Exception:
-                pass
-
-            # Navegação
-            self.go("home")
-            if tt_open == "fav":
-                self.select_home_tab("tab_fav")
-            elif tt_open == "char":
-                self.select_home_tab("tab_char")
-                if tt_char:
-                    try:
-                        home = self.root.get_screen("home")
-                        home.ids.char_name.text = tt_char
-                    except Exception:
-                        pass
-                    # chama a busca após o tab/ids estarem prontos
-                    Clock.schedule_once(lambda *_: self.search_character(), 0.2)
-
-            # Feedback opcional
-            if tt_event and tt_char:
-                if tt_event == "online":
-                    self.toast(f"{tt_char} ficou ONLINE")
-                elif tt_event == "level":
-                    self.toast(f"{tt_char} upou level")
-                elif tt_event == "death":
-                    self.toast(f"{tt_char} morreu")
         except Exception:
             pass
 
@@ -1089,6 +1005,7 @@ class TibiaToolsApp(MDApp):
             if "char_xp_list" in home.ids:
                 try:
                     home.ids.char_xp_total.text = "Carregando histórico de XP..."
+                    home.ids.char_xp_total.theme_text_color = "Hint"
                 except Exception:
                     pass
                 try:
@@ -1126,6 +1043,7 @@ class TibiaToolsApp(MDApp):
             if "char_xp_list" in home.ids:
                 try:
                     home.ids.char_xp_total.text = "—"
+                    home.ids.char_xp_total.theme_text_color = "Hint"
                 except Exception:
                     pass
                 try:
@@ -1152,9 +1070,13 @@ class TibiaToolsApp(MDApp):
         houses = payload.get("houses") or []
         deaths = payload.get("deaths", [])
 
-        # XP 30 dias (GuildStats)
+        # XP últimos 30 dias (GuildStats tab=9)
         exp_rows_30 = payload.get("exp_rows_30") or []
         exp_total_30 = payload.get("exp_total_30")
+        try:
+            home.char_xp_source_url = str(payload.get("gs_exp_url") or "")
+        except Exception:
+            pass
 
         try:
             home._last_char_payload = payload
@@ -1209,20 +1131,6 @@ class TibiaToolsApp(MDApp):
             add_one(f"Level: {level}", "signal")
             add_one(f"World: {world}", "earth")
 
-            # XP últimos 30 dias (se disponível)
-            def fmt_pt(n: int) -> str:
-                try:
-                    s = f"{abs(int(n)):,}".replace(",", ".")
-                except Exception:
-                    s = str(n)
-                return ("-" if int(n) < 0 else "+") + s
-
-            if isinstance(exp_total_30, (int, float)):
-                add_one(f"XP (30 dias): {fmt_pt(int(exp_total_30))}", "chart-line")
-            else:
-                # não poluir demais; mostra apenas quando houver histórico
-                pass
-
             # Guild (evita cortar demais; toque para ver completo)
             gname = str(guild.get("name") or "").strip() if isinstance(guild, dict) else ""
             grank = str(guild.get("rank") or "").strip() if isinstance(guild, dict) else ""
@@ -1246,38 +1154,45 @@ class TibiaToolsApp(MDApp):
                 add_two("Houses", f"{len(houses_list)} casas", "home", "Houses", full_h)
 
             # ----------------------------
-            # XP últimos ~30 dias (card)
+            # Card: XP últimos 30 dias
             # ----------------------------
             if "char_xp_list" in home.ids:
+                def fmt_pt(n: int) -> str:
+                    try:
+                        s = f"{abs(int(n)):,}".replace(",", ".")
+                    except Exception:
+                        s = str(n)
+                    return ("-" if int(n) < 0 else "+") + s
+
                 try:
                     xlist = home.ids.char_xp_list
                     xlist.clear_widgets()
 
-                    if isinstance(exp_total_30, (int, float)) and exp_rows_30:
-                        total_txt = f"Total: {fmt_pt(int(exp_total_30))} XP (últimos 30 dias)"
+                    rows = exp_rows_30 if isinstance(exp_rows_30, list) else []
+                    if isinstance(exp_total_30, (int, float)) and rows:
+                        home.ids.char_xp_total.text = f"Total: {fmt_pt(int(exp_total_30))} XP (últimos 30 dias)"
+                        home.ids.char_xp_total.theme_text_color = "Primary"
                     else:
-                        total_txt = "Sem histórico de XP disponível (GuildStats)."
-                    try:
-                        home.ids.char_xp_total.text = total_txt
-                    except Exception:
-                        pass
+                        home.ids.char_xp_total.text = "Sem histórico de XP no GuildStats para esse char."
+                        home.ids.char_xp_total.theme_text_color = "Hint"
 
-                    if not exp_rows_30:
-                        it = OneLineIconListItem(text="Sem dados para este char.")
+                    if not rows:
+                        it = OneLineIconListItem(text="Sem dados.")
                         it.add_widget(IconLeftWidget(icon="chart-line"))
                         xlist.add_widget(it)
                     else:
-                        for r in exp_rows_30[:30]:
+                        for r in rows[:30]:
                             ds = str(r.get("date") or "").strip()
+                            ev = r.get("exp_change_int")
                             try:
-                                val = int(r.get("exp_change_int") or 0)
+                                ev_i = int(ev)
                             except Exception:
                                 continue
-                            sec = f"{fmt_pt(val)} XP"
-                            icon = "trending-up" if val >= 0 else "trending-down"
-                            it = TwoLineIconListItem(text=ds, secondary_text=sec)
-                            it.add_widget(IconLeftWidget(icon=icon))
-                            xlist.add_widget(it)
+                            sec = f"{fmt_pt(ev_i)} XP"
+                            icon = "trending-up" if ev_i >= 0 else "trending-down"
+                            item = TwoLineIconListItem(text=ds, secondary_text=sec)
+                            item.add_widget(IconLeftWidget(icon=icon))
+                            xlist.add_widget(item)
                 except Exception:
                     pass
 
@@ -1309,48 +1224,6 @@ class TibiaToolsApp(MDApp):
                 ditem = OneLineIconListItem(text="Sem mortes recentes (ou sem dados).")
                 ditem.add_widget(IconLeftWidget(icon="skull-outline"))
                 dlist.add_widget(ditem)
-
-            # ----------------------------
-            # Card: XP últimos 30 dias
-            # ----------------------------
-            if "char_xp_list" in home.ids:
-                try:
-                    xlist = home.ids.char_xp_list
-                    xlist.clear_widgets()
-
-                    if isinstance(exp_total_30, (int, float)) and exp_rows_30:
-                        home.ids.char_xp_total.text = f"Total: {fmt_pt(int(exp_total_30))} XP (últimos 30 dias)"
-                        home.ids.char_xp_total.theme_text_color = "Primary"
-                    else:
-                        home.ids.char_xp_total.text = "Sem histórico de XP no GuildStats para esse char."
-                        home.ids.char_xp_total.theme_text_color = "Hint"
-
-                    rows = exp_rows_30 if isinstance(exp_rows_30, list) else []
-                    if not rows:
-                        it = OneLineIconListItem(text="Sem dados.")
-                        it.add_widget(IconLeftWidget(icon="chart-line"))
-                        xlist.add_widget(it)
-                    else:
-                        # Mostra até 30 dias (mais recentes primeiro)
-                        for r in rows[:30]:
-                            ds = str(r.get("date") or "").strip()
-                            ev = r.get("exp_change_int")
-                            try:
-                                ev_i = int(ev)
-                            except Exception:
-                                continue
-                            sec = f"{fmt_pt(ev_i)} XP"
-                            icon = "trending-up" if ev_i >= 0 else "trending-down"
-                            item = TwoLineIconListItem(text=ds, secondary_text=sec)
-                            item.add_widget(IconLeftWidget(icon=icon))
-
-                            # cor do secundário (verde/vermelho)
-                            item.secondary_theme_text_color = "Custom"
-                            item.secondary_text_color = (0.18, 0.8, 0.44, 1) if ev_i >= 0 else (0.9, 0.3, 0.24, 1)
-
-                            xlist.add_widget(item)
-                except Exception:
-                    pass
             return
 
         # Fallback antigo (se ainda existir)
@@ -1377,7 +1250,10 @@ class TibiaToolsApp(MDApp):
 
         self._char_set_loading(home, name)
         home.char_last_url = ""
-        home.char_xp_source_url = ""
+        try:
+            home.char_xp_source_url = ""
+        except Exception:
+            pass
 
         def worker():
             try:
@@ -1457,13 +1333,12 @@ class TibiaToolsApp(MDApp):
                 # ----------------------------
                 # XP últimos ~30 dias (GuildStats tab=9)
                 # ----------------------------
-                gs_exp_url = f"https://guildstats.eu/character?nick={requests.utils.quote_plus(title or name)}&tab=9"
+                gs_exp_url = f"https://guildstats.eu/character?nick={urllib.parse.quote_plus(title or name)}&tab=9"
                 exp_rows_30 = []
                 exp_total_30 = None
                 try:
                     rows = fetch_guildstats_exp_changes(title or name)
                     if rows:
-                        # referência: data mais recente da tabela (nem sempre é 'hoje')
                         dates = []
                         for r in rows:
                             ds = str(r.get("date") or "")
@@ -1474,7 +1349,6 @@ class TibiaToolsApp(MDApp):
                         ref = max(dates) if dates else datetime.utcnow().date()
                         cutoff = ref - timedelta(days=30)
 
-                        # filtra e ordena por data desc
                         for r in rows:
                             ds = str(r.get("date") or "")
                             try:
@@ -1547,6 +1421,7 @@ class TibiaToolsApp(MDApp):
         def done(res):
             ok, payload_or_msg, url = res
             home.char_last_url = url
+
             try:
                 if ok and isinstance(payload_or_msg, dict):
                     home.char_xp_source_url = str(payload_or_msg.get("gs_exp_url") or "")
@@ -1753,7 +1628,7 @@ class TibiaToolsApp(MDApp):
     def _fetch_world_online_players(self, world: str, timeout: int = 12) -> Optional[set]:
         """Retorna um set (lowercase) com os nomes online no world (TibiaData /v4/world/{world})."""
         try:
-            safe_world = requests.utils.quote(str(world).strip())
+            safe_world = urllib.parse.quote(str(world).strip())
             url = f"https://api.tibiadata.com/v4/world/{safe_world}"
             r = requests.get(url, timeout=timeout, headers={"User-Agent": "TibiaToolsApp"})
             r.raise_for_status()
