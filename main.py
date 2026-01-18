@@ -1010,7 +1010,7 @@ class TibiaToolsApp(MDApp):
                     pass
                 try:
                     home.ids.char_xp_list.clear_widgets()
-                    xitem = OneLineIconListItem(text="Buscando no GuildStats...")
+                    xitem = OneLineIconListItem(text="Buscando histórico de XP...")
                     xitem.add_widget(IconLeftWidget(icon="chart-line"))
                     home.ids.char_xp_list.add_widget(xitem)
                 except Exception:
@@ -1173,7 +1173,7 @@ class TibiaToolsApp(MDApp):
                         home.ids.char_xp_total.text = f"Total: {fmt_pt(int(exp_total_30))} XP (últimos 30 dias)"
                         home.ids.char_xp_total.theme_text_color = "Primary"
                     else:
-                        home.ids.char_xp_total.text = "Sem histórico de XP no GuildStats para esse char."
+                        home.ids.char_xp_total.text = "Histórico de XP indisponível. Toque no ícone ↗ para conferir."
                         home.ids.char_xp_total.theme_text_color = "Hint"
 
                     if not rows:

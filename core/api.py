@@ -330,8 +330,16 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
                 txt = r.text or ""
                 # Detecta páginas de bloqueio/anti-bot (para não tentar parsear "lixo").
                 low = txt.lower()
-                if "checking your browser" in low or "cloudflare" in low or "enable javascript" in low:
-                    return ""
+                block_markers = (
+                    'checking your browser',
+                    'just a moment',
+                    'cf-browser-verification',
+                    'attention required',
+                    'verify you are human',
+                    'enable javascript',
+                )
+                if any(m in low for m in block_markers):
+                    return ''
                 return txt
             except Exception:
                 return ""
@@ -370,6 +378,38 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
             return -num if sign_ch == "-" else num
 
         date_re = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+
+        # Tenta um parsing simples (col0=data, col1=exp_change) percorrendo todos os <tr>.
+        # Isso cobre variações em que a tabela não tem <th> ou muda de classe/estrutura.
+        fast_rows: List[Dict[str, Any]] = []
+        seen_dates = set()
+        for tr in soup.find_all('tr'):
+            tds = tr.find_all('td')
+            if len(tds) < 2:
+                continue
+            dtext = re.sub(r'\s+', ' ', (tds[0].get_text(' ', strip=True) or '')).strip()
+            mdate = date_re.search(dtext)
+            if not mdate:
+                continue
+            date_iso = mdate.group(1)
+            etext = re.sub(r'\s+', ' ', (tds[1].get_text(' ', strip=True) or '')).strip()
+            exp_int = parse_exp_to_int(etext)
+            if exp_int is None:
+                continue
+            # evita pegar colunas pequenas (rank/lvl) por engano
+            if abs(int(exp_int)) not in (0,) and abs(int(exp_int)) < 10_000:
+                continue
+            if date_iso in seen_dates:
+                continue
+            seen_dates.add(date_iso)
+            fast_rows.append({
+                'date': date_iso,
+                'exp_change': etext,
+                'exp_change_int': int(exp_int),
+            })
+
+        if len(fast_rows) >= 3:
+            return fast_rows
 
         # Heurística robusta: escolhe a tabela em que muitas linhas possuem uma data ISO
         # e alguma coluna com valores grandes e frequentemente prefixados com +/-. 
