@@ -39,7 +39,14 @@ def import_core_modules() -> Tuple[Any, Any, str]:
             last_err = e
     raise last_err or RuntimeError("Falha ao importar core/Core")
 
-def _android_notify(title: str, text: str, notif_id: int = 1002):
+def _android_notify(
+    title: str,
+    text: str,
+    notif_id: int = 1002,
+    *,
+    char_name: Optional[str] = None,
+    event_type: Optional[str] = None,
+):
     try:
         from jnius import autoclass
         # Intent para abrir o app ao tocar na notificação
@@ -67,9 +74,33 @@ def _android_notify(title: str, text: str, notif_id: int = 1002):
 
         # Abre o app ao clicar (em alguns devices, sem isso o toque não faz nada)
         try:
-            intent = Intent(service, PythonActivity)
+            # Usa o launch intent do pacote (mais robusto); fallback para PythonActivity.
+            intent = None
+            try:
+                pm = service.getPackageManager()
+                intent = pm.getLaunchIntentForPackage(service.getPackageName())
+            except Exception:
+                intent = None
+            if intent is None:
+                intent = Intent(service, PythonActivity)
             try:
                 intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            except Exception:
+                pass
+
+            # Extras para o app abrir direto na aba Char e disparar a busca.
+            # Obs: setAction único ajuda a evitar que o Android "reaproveite" um PendingIntent antigo.
+            try:
+                intent.setAction(f"TT_EVENT_{notif_id}_{int(time.time()*1000)}")
+            except Exception:
+                pass
+            try:
+                intent.putExtra("tt_open_tab", "tab_char")
+                intent.putExtra("tt_auto_search", True)
+                if char_name:
+                    intent.putExtra("tt_char_name", str(char_name))
+                if event_type:
+                    intent.putExtra("tt_event_type", str(event_type))
             except Exception:
                 pass
             pi_flags = int(PendingIntent.FLAG_UPDATE_CURRENT)
@@ -122,9 +153,28 @@ def _android_start_foreground(title: str, text: str, notif_id: int = 1001):
 
         # Mantém o mesmo comportamento: abrir o app ao tocar
         try:
-            intent = Intent(service, PythonActivity)
+            # Usa o launch intent do pacote (mais robusto); fallback para PythonActivity.
+            intent = None
+            try:
+                pm = service.getPackageManager()
+                intent = pm.getLaunchIntentForPackage(service.getPackageName())
+            except Exception:
+                intent = None
+            if intent is None:
+                intent = Intent(service, PythonActivity)
             try:
                 intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            except Exception:
+                pass
+
+            # Abre direto na aba Char (sem char específico)
+            try:
+                intent.setAction(f"TT_FG_{notif_id}_{int(time.time()*1000)}")
+            except Exception:
+                pass
+            try:
+                intent.putExtra("tt_open_tab", "tab_char")
+                intent.putExtra("tt_auto_search", False)
             except Exception:
                 pass
             pi_flags = int(PendingIntent.FLAG_UPDATE_CURRENT)
@@ -276,11 +326,23 @@ def main():
 
                     if notify_online and (not prev_online) and online:
                         nid = 1000 + (abs(hash(f"online:{ln}")) % 50000)
-                        _android_notify("Favorito online", f"{name} está ONLINE", notif_id=nid)
+                        _android_notify(
+                            "Favorito online",
+                            f"{name} está ONLINE",
+                            notif_id=nid,
+                            char_name=name,
+                            event_type="online",
+                        )
 
                     if notify_level and (prev_level is not None) and (level is not None) and level > prev_level:
                         nid = 1000 + (abs(hash(f"level:{ln}")) % 50000)
-                        _android_notify("Level up", f"{name} agora é level {level}", notif_id=nid)
+                        _android_notify(
+                            "Level up",
+                            f"{name} agora é level {level}",
+                            notif_id=nid,
+                            char_name=name,
+                            event_type="level",
+                        )
 
                     if notify_death and isinstance(death_time, str) and death_time and death_time != prev_death_time:
                         try:
@@ -291,7 +353,13 @@ def main():
                         if summary:
                             msg += f" ({summary})"
                         nid = 1000 + (abs(hash(f"death:{ln}:{death_time}")) % 50000)
-                        _android_notify("Morte", msg, notif_id=nid)
+                        _android_notify(
+                            "Morte",
+                            msg,
+                            notif_id=nid,
+                            char_name=name,
+                            event_type="death",
+                        )
 
                 # update persisted last state
                 last[ln] = {
