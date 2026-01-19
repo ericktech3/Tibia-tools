@@ -5,7 +5,6 @@ import re
 from typing import Any, Dict, List, Optional
 
 import requests
-from urllib.parse import quote
 
 # ExevoPan (Next.js) – algumas rotas variam por idioma.
 EXEVOPAN_URLS = [
@@ -279,7 +278,7 @@ def fetch_exevopan_bosses(world: str, timeout: int = 20) -> List[Dict[str, str]]
 
     html = ""
     for tpl in EXEVOPAN_URLS:
-        url = tpl.format(world=quote(world))
+        url = tpl.format(world=requests.utils.quote(world))
         try:
             r = requests.get(url, headers=headers, timeout=timeout)
             if r.status_code >= 400:
