@@ -28,7 +28,6 @@ from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager
-from kivy.uix.video import Video
 
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
@@ -64,8 +63,10 @@ except Exception:
 
 KV_FILE = "tibia_tools.kv"
 
-# Splash: video mostrado logo apos o presplash do Android
-SPLASH_DURATION_SECONDS = 8.0
+# Splash animado (frames)
+SPLASH_FPS = 10  # 10fps * 8s = ~80 frames
+SPLASH_FRAME_COUNT = 80
+SPLASH_FRAME_TEMPLATE = "assets/splash_frames/frame_{i:04d}.jpg"
 
 
 class RootSM(ScreenManager):
@@ -104,6 +105,11 @@ class TibiaToolsApp(MDApp):
         self._fav_status_job_id = 0
         self._fav_refresh_event = None
 
+        # Splash
+        self._splash_event = None
+        self._splash_index = 0
+        self._splash_done = False
+
     def build(self):
         self.title = "Tibia Tools"
         self.theme_cls.primary_palette = "Blue"
@@ -131,8 +137,14 @@ class TibiaToolsApp(MDApp):
         # ✅ MUITO IMPORTANTE:
         # só agenda funções que usam telas/ids se o KV carregou de verdade.
         if kv_ok and isinstance(root, ScreenManager):
-            # Splash: executa logo apos iniciar (pos-presplash)
-            Clock.schedule_once(lambda *_: self._start_splash(), 0)
+            # Mostra splash (logo após o presplash do Android)
+            if "splash" in root.screen_names:
+                try:
+                    root.current = "splash"
+                except Exception:
+                    pass
+                Clock.schedule_once(lambda *_: self._start_splash(), 0)
+
             self.load_favorites()
             self._load_prefs_cache()
             Clock.schedule_once(lambda *_: self._apply_settings_to_ui(), 0)
@@ -150,64 +162,91 @@ class TibiaToolsApp(MDApp):
 
         return root
 
-
     # --------------------
-    # Splash (pos-presplash)
+    # Splash
     # --------------------
     def _start_splash(self, *_):
-        """Toca o video splash e troca para Home apos ~8s (ou fim do video)."""
+        """Inicia animação de splash por frames (mais compatível que vídeo no Android)."""
+        if self._splash_done:
+            return
         try:
             sm = self.root
-            if not isinstance(sm, ScreenManager):
+            if not isinstance(sm, ScreenManager) or "splash" not in sm.screen_names:
+                return
+            splash = sm.get_screen("splash")
+            img = splash.ids.get("splash_img")
+            if img is None:
                 return
 
-            if "splash" not in sm.screen_names:
-                return
-
-            # garante que esta na tela splash
-            sm.current = "splash"
-
-            # tenta iniciar video
+            # Garante 1o frame na tela
+            img.source = SPLASH_FRAME_TEMPLATE.format(i=1)
             try:
-                scr = sm.get_screen("splash")
-                vid = scr.ids.get("splash_video") if hasattr(scr, "ids") else None
-                if vid is not None:
-                    try:
-                        vid.state = "play"
-                    except Exception:
-                        pass
-                    # se o provider suportar, troca ao final do video
-                    try:
-                        vid.bind(eos=lambda *_: self._finish_splash())
-                    except Exception:
-                        pass
+                img.reload()
             except Exception:
                 pass
 
-            # fallback: sempre sai do splash apos a duracao
-            Clock.schedule_once(lambda *_: self._finish_splash(), SPLASH_DURATION_SECONDS + 0.2)
+            self._splash_index = 1
+
+            # Agenda ticks
+            if self._splash_event is not None:
+                try:
+                    self._splash_event.cancel()
+                except Exception:
+                    pass
+            self._splash_event = Clock.schedule_interval(self._splash_tick, 1.0 / float(SPLASH_FPS))
         except Exception:
-            pass
+            # Se der qualquer erro, não trava o app
+            self._finish_splash()
+
+    def _splash_tick(self, dt):
+        if self._splash_done:
+            return False
+        try:
+            sm = self.root
+            if not isinstance(sm, ScreenManager):
+                return False
+            splash = sm.get_screen("splash")
+            img = splash.ids.get("splash_img")
+            if img is None:
+                return False
+
+            self._splash_index += 1
+            if self._splash_index > SPLASH_FRAME_COUNT:
+                self._finish_splash()
+                return False
+
+            img.source = SPLASH_FRAME_TEMPLATE.format(i=self._splash_index)
+            # reload() evita alguns devices mostrando branco em troca de source
+            try:
+                img.reload()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            self._finish_splash()
+            return False
+
+    def skip_splash(self, *_):
+        """Permite pular a animação tocando na tela."""
+        self._finish_splash()
 
     def _finish_splash(self, *_):
+        if self._splash_done:
+            return
+        self._splash_done = True
+        try:
+            if self._splash_event is not None:
+                try:
+                    self._splash_event.cancel()
+                except Exception:
+                    pass
+                self._splash_event = None
+        except Exception:
+            pass
         try:
             sm = self.root
-            if not isinstance(sm, ScreenManager):
-                return
-            if "home" in sm.screen_names:
+            if isinstance(sm, ScreenManager) and "home" in sm.screen_names:
                 sm.current = "home"
-
-            # libera o video (evita consumo desnecessario)
-            try:
-                scr = sm.get_screen("splash")
-                vid = scr.ids.get("splash_video") if hasattr(scr, "ids") else None
-                if vid is not None:
-                    try:
-                        vid.state = "stop"
-                    except Exception:
-                        pass
-            except Exception:
-                pass
         except Exception:
             pass
 

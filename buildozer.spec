@@ -16,7 +16,7 @@ package.domain = org.erick
 source.dir = .
 
 # (list) Source files to include (let empty to include all the files)
-source.include_exts = py,kv,png,jpg,jpeg,txt,json,ttf,atlas,ico,mp4
+source.include_exts = py,kv,png,jpg,jpeg,txt,json,ttf,atlas,ico
 
 # (str) Application versioning (method 1)
 version = 0.1.0

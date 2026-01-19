@@ -5,20 +5,6 @@
     IconLeftWidget:
         icon: root.icon
 
-
-<SplashScreen@MDScreen>:
-    MDBoxLayout:
-        orientation: "vertical"
-        md_bg_color: 0, 0, 0, 1
-
-        Video:
-            id: splash_video
-            source: "assets/splash.mp4"
-            state: "stop"
-            options: {"eos": "stop"}
-            allow_stretch: True
-            keep_ratio: True
-
 RootSM:
     SplashScreen:
         name: "splash"
@@ -40,6 +26,19 @@ RootSM:
         name: "settings"
     BossFavoritesScreen:
         name: "boss_favorites"
+
+
+<SplashScreen@MDScreen>:
+    md_bg_color: 0, 0, 0, 1
+    on_touch_down: app.skip_splash()
+
+    MDBoxLayout:
+        orientation: "vertical"
+        Image:
+            id: splash_img
+            source: "assets/splash_frames/frame_0001.jpg"
+            allow_stretch: True
+            keep_ratio: True
 
 
 <HomeScreen@MDScreen>:
