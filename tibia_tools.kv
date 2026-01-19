@@ -186,10 +186,25 @@ RootSM:
                         height: self.minimum_height
                         adaptive_height: True
 
-                        MDTextField:
-                            id: char_name
-                            hint_text: "Nome do personagem"
-                            mode: "rectangle"
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: char_name
+                                hint_text: "Nome do personagem"
+                                mode: "rectangle"
+                                multiline: False
+                                on_text_validate: app.search_character()
+
+                            MDIconButton:
+                                icon: "history"
+                                on_release: app.open_char_history_menu()
+
+                            MDIconButton:
+                                icon: "close"
+                                on_release: app.clear_char_search()
 
                         MDRaisedButton:
                             text: "Buscar"
@@ -441,6 +456,18 @@ RootSM:
                             text: "Hunt Analyzer"
                             icon: "chart-bar"
                             on_release: app.open_more_target("hunt")
+                        MoreItem:
+                            text: "Novidades"
+                            icon: "new-box"
+                            on_release: app.open_more_target("changelog")
+                        MoreItem:
+                            text: "Sobre"
+                            icon: "information-outline"
+                            on_release: app.open_more_target("about")
+                        MoreItem:
+                            text: "Feedback"
+                            icon: "message-text"
+                            on_release: app.open_more_target("feedback")
                         MoreItem:
                             text: "Configurações"
                             icon: "cog"
@@ -977,6 +1004,28 @@ RootSM:
                 spacing: dp(12)
                 size_hint_y: None
                 height: self.minimum_height
+
+                MDLabel:
+                    text: "Aparência"
+                    bold: True
+                    size_hint_y: None
+                    height: dp(24)
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(10)
+
+                    MDLabel:
+                        text: "Tema claro"
+                        valign: "middle"
+
+                    MDSwitch:
+                        id: set_theme_light
+                        active: False
+
+                MDSeparator:
+                    height: dp(1)
 
                 MDLabel:
                     text: "Notificações (ao abrir o app)"

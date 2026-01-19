@@ -98,6 +98,9 @@ class TibiaToolsApp(MDApp):
         self._menu_vocation: Optional[MDDropdownMenu] = None
         self._menu_weapon: Optional[MDDropdownMenu] = None
 
+        # Char search history menu
+        self._menu_char_history: Optional[MDDropdownMenu] = None
+
         # Favorites (chars) UI/status helpers
         self._fav_items = {}  # lower(char_name) -> list item
         self._fav_status_cache = {}  # lower(char_name) -> last known "online"/"offline"
@@ -118,6 +121,15 @@ class TibiaToolsApp(MDApp):
                 text="Erro ao importar módulos (core).\nVeja o logcat (Traceback).",
                 halign="center",
             )
+
+        # Preferências (tema) antes de carregar o KV
+        try:
+            self._load_prefs_cache()
+            style = str(self._prefs_get("theme_style", "Dark") or "Dark").strip().title()
+            if style in ("Dark", "Light"):
+                self.theme_cls.theme_style = style
+        except Exception:
+            pass
 
         kv_ok = False
         try:
@@ -151,6 +163,103 @@ class TibiaToolsApp(MDApp):
         return root
 
     # --------------------
+    # Deep-link / Notification click handling (Android)
+    # --------------------
+    def _handle_android_intent(self) -> None:
+        """Se o app foi aberto por uma notificação do serviço, abre a aba Char e (opcionalmente) dispara a busca.
+
+        O serviço envia extras no Intent:
+        - tt_open_tab: "tab_char"
+        - tt_char_name: nome do char (opcional)
+        - tt_auto_search: bool
+        - tt_event_type: "online"/"level"/"death" (opcional)
+        """
+        if not self._is_android():
+            return
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            Intent = autoclass("android.content.Intent")
+
+            act = PythonActivity.mActivity
+            intent = act.getIntent()
+            if intent is None:
+                return
+
+            open_tab = None
+            char_name = None
+            auto_search = False
+            event_type = None
+            try:
+                open_tab = intent.getStringExtra("tt_open_tab")
+            except Exception:
+                open_tab = None
+            try:
+                char_name = intent.getStringExtra("tt_char_name")
+            except Exception:
+                char_name = None
+            try:
+                event_type = intent.getStringExtra("tt_event_type")
+            except Exception:
+                event_type = None
+            try:
+                auto_search = bool(intent.getBooleanExtra("tt_auto_search", False))
+            except Exception:
+                auto_search = False
+
+            if not (open_tab or char_name or event_type):
+                return
+
+            sig = f"{open_tab}|{char_name}|{auto_search}|{event_type}"
+            if getattr(self, "_last_intent_sig", None) == sig:
+                return
+            self._last_intent_sig = sig
+
+            # Garante que estamos na Home e na aba Char
+            try:
+                self.go("home")
+            except Exception:
+                pass
+            try:
+                self.select_home_tab("tab_char")
+            except Exception:
+                pass
+
+            def apply_and_search(*_):
+                try:
+                    home = self.root.get_screen("home")
+                    if char_name and "char_name" in home.ids:
+                        home.ids.char_name.text = str(char_name)
+                    if auto_search and char_name:
+                        # silencioso: não spammar toast ao tocar na notificação
+                        self.search_character(silent=True)
+                except Exception:
+                    pass
+
+            # Deixa a UI terminar de montar antes de mexer nos ids
+            Clock.schedule_once(apply_and_search, 0.15)
+
+            # Evita re-disparar ao voltar de background: limpa o Intent atual
+            try:
+                empty = Intent()
+                try:
+                    empty.setAction(f"TT_HANDLED_{int(time.time()*1000)}")
+                except Exception:
+                    pass
+                act.setIntent(empty)
+            except Exception:
+                # fallback: remove extras
+                try:
+                    intent.removeExtra("tt_open_tab")
+                    intent.removeExtra("tt_char_name")
+                    intent.removeExtra("tt_auto_search")
+                    intent.removeExtra("tt_event_type")
+                except Exception:
+                    pass
+        except Exception:
+            return
+
+    # --------------------
     # Navigation
     # --------------------
 
@@ -160,6 +269,12 @@ class TibiaToolsApp(MDApp):
         Em vários devices, o helper `android.permissions` não dispara o popup e/ou falha silenciosamente.
         Aqui fazemos o check + request via Activity.requestPermissions (JNI), e re-tentamos com throttle.
         """
+        # Deep-link de notificação: processa logo no start (após o KV estar pronto)
+        try:
+            Clock.schedule_once(lambda *_: self._handle_android_intent(), 1.0)
+        except Exception:
+            pass
+
         try:
             if not self._is_android():
                 return
@@ -182,6 +297,13 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
+    def on_resume(self):
+        # Quando o usuário toca na notificação com o app em background, isso garante o deep-link.
+        try:
+            Clock.schedule_once(lambda *_: self._handle_android_intent(), 0.2)
+        except Exception:
+            pass
+
     def go(self, screen_name: str):
         sm = self.root
         if isinstance(sm, ScreenManager) and screen_name in sm.screen_names:
@@ -201,6 +323,17 @@ class TibiaToolsApp(MDApp):
             pass
 
     def open_more_target(self, target: str):
+        # Itens que abrem dialog/ações, não telas
+        if target == "about":
+            self.show_about()
+            return
+        if target == "changelog":
+            self.show_changelog()
+            return
+        if target == "feedback":
+            self.open_feedback()
+            return
+
         self.go(target)
         if target == "bosses":
             self._bosses_refresh_worlds()
@@ -210,6 +343,133 @@ class TibiaToolsApp(MDApp):
             self._ensure_training_menus()
         elif target == "settings":
             self._apply_settings_to_ui()
+
+    def show_about(self):
+        txt = (
+            "Tibia Tools\n"
+            "\n"
+            "• Consulta de personagens (status, guild, houses, mortes)\n"
+            "• Favoritos com monitoramento em background (online/morte/level)\n"
+            "• Boosted / Bosses / Treino / Hunt Analyzer / Imbuements\n"
+            "\n"
+            "Observações:\n"
+            "- Dados de status vêm de TibiaData e Tibia.com (quando necessário).\n"
+            "- Histórico de XP (30 dias) usa um fansite como fonte auxiliar.\n"
+            "\n"
+            "Dica: toque em qualquer notificação de favorito para abrir a aba de personagem automaticamente."
+        )
+        self._show_text_dialog("Sobre", txt)
+
+    def show_changelog(self):
+        txt = (
+            "Novidades\n\n"
+            "- Notificações em background para Favoritos: ONLINE, MORTE e LEVEL UP\n"
+            "- Toque na notificação abre o app na aba do personagem e já pesquisa o char\n"
+            "- Histórico de busca de personagens (botão de relógio)\n"
+            "- Card de XP feita: total 7d e 30d (quando disponível)\n"
+            "- Configuração de tema claro/escuro"
+        )
+        self._show_text_dialog("Novidades", txt)
+
+    def open_feedback(self):
+        # Abre issues do GitHub se houver repo configurado; senão, abre o próprio repo.
+        url = str(self._prefs_get("repo_url", "") or "").strip()
+        if url and "github.com" in url.lower():
+            if "/issues" not in url.lower():
+                url = url.rstrip("/") + "/issues/new"
+            try:
+                webbrowser.open(url)
+                return
+            except Exception:
+                pass
+        self.toast("Defina a URL do repo nas Configurações para abrir o feedback.")
+
+    # --------------------
+    # Char tab helpers (history / clear)
+    # --------------------
+    def clear_char_search(self):
+        try:
+            home = self.root.get_screen("home")
+            if "char_name" in home.ids:
+                home.ids.char_name.text = ""
+                home.ids.char_name.focus = True
+        except Exception:
+            pass
+
+    def _get_char_history(self) -> list[str]:
+        try:
+            hist = self._prefs_get("char_history", []) or []
+            if not isinstance(hist, list):
+                return []
+            out = []
+            for x in hist:
+                s = str(x or "").strip()
+                if s:
+                    out.append(s)
+            return out
+        except Exception:
+            return []
+
+    def _add_to_char_history(self, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            return
+        try:
+            hist = self._get_char_history()
+            # remove duplicates (case-insensitive)
+            hist = [h for h in hist if h.strip().lower() != name.lower()]
+            hist.insert(0, name)
+            hist = hist[:12]
+            self._prefs_set("char_history", hist)
+        except Exception:
+            pass
+
+    def open_char_history_menu(self):
+        try:
+            home = self.root.get_screen("home")
+            anchor = home.ids.get("char_name")
+        except Exception:
+            return
+
+        hist = self._get_char_history()
+        if not hist:
+            self.toast("Sem histórico ainda.")
+            return
+
+        def pick(n: str):
+            try:
+                home.ids.char_name.text = n
+                # fecha menu e foca no campo
+                try:
+                    if self._menu_char_history:
+                        self._menu_char_history.dismiss()
+                except Exception:
+                    pass
+                home.ids.char_name.focus = True
+            except Exception:
+                pass
+
+        menu_items = [
+            {
+                "viewclass": "OneLineListItem",
+                "text": n,
+                "on_release": (lambda x=n: pick(x)),
+            }
+            for n in hist
+        ]
+
+        try:
+            if self._menu_char_history:
+                self._menu_char_history.dismiss()
+        except Exception:
+            pass
+        self._menu_char_history = MDDropdownMenu(
+            caller=anchor,
+            items=menu_items,
+            width_mult=4,
+            max_height=dp(320),
+        )
+        self._menu_char_history.open()
 
     
     # --------------------
@@ -810,6 +1070,12 @@ class TibiaToolsApp(MDApp):
         except Exception:
             return
         try:
+            # Tema
+            try:
+                style = str(self._prefs_get("theme_style", "Dark") or "Dark").strip().title()
+                scr.ids.set_theme_light.active = (style == "Light")
+            except Exception:
+                pass
             scr.ids.set_notify_boosted.active = bool(self._prefs_get("notify_boosted", True))
             scr.ids.set_notify_boss_high.active = bool(self._prefs_get("notify_boss_high", True))
             scr.ids.set_repo_url.text = str(self._prefs_get("repo_url", "") or "")
@@ -831,6 +1097,16 @@ class TibiaToolsApp(MDApp):
     def settings_save(self):
         try:
             scr = self.root.get_screen("settings")
+            # Tema
+            try:
+                theme_style = "Light" if bool(scr.ids.set_theme_light.active) else "Dark"
+                self._prefs_set("theme_style", theme_style)
+                try:
+                    self.theme_cls.theme_style = theme_style
+                except Exception:
+                    pass
+            except Exception:
+                pass
             self._prefs_set("notify_boosted", bool(scr.ids.set_notify_boosted.active))
             self._prefs_set("notify_boss_high", bool(scr.ids.set_notify_boss_high.active))
             self._prefs_set("repo_url", (scr.ids.set_repo_url.text or "").strip())
@@ -1085,6 +1361,7 @@ class TibiaToolsApp(MDApp):
         try:
             if title:
                 self._prefs_set("last_char", title)
+                self._add_to_char_history(title)
         except Exception:
             pass
         try:
@@ -1170,7 +1447,43 @@ class TibiaToolsApp(MDApp):
 
                     rows = exp_rows_30 if isinstance(exp_rows_30, list) else []
                     if isinstance(exp_total_30, (int, float)) and rows:
-                        home.ids.char_xp_total.text = f"Total: {fmt_pt(int(exp_total_30))} XP (últimos 30 dias)"
+                        # também calcula últimos 7 dias com base na data mais recente do histórico
+                        total_7 = None
+                        try:
+                            ref_dates = []
+                            for rr in rows:
+                                ds0 = str(rr.get("date") or "").strip()
+                                if not ds0:
+                                    continue
+                                try:
+                                    ref_dates.append(datetime.fromisoformat(ds0).date())
+                                except Exception:
+                                    continue
+                            ref = max(ref_dates) if ref_dates else datetime.utcnow().date()
+                            cutoff7 = ref - timedelta(days=7)
+                            s7 = 0
+                            for rr in rows:
+                                ds0 = str(rr.get("date") or "").strip()
+                                if not ds0:
+                                    continue
+                                try:
+                                    d0 = datetime.fromisoformat(ds0).date()
+                                except Exception:
+                                    continue
+                                if d0 < cutoff7:
+                                    continue
+                                try:
+                                    s7 += int(rr.get("exp_change_int") or 0)
+                                except Exception:
+                                    continue
+                            total_7 = int(s7)
+                        except Exception:
+                            total_7 = None
+
+                        if isinstance(total_7, int):
+                            home.ids.char_xp_total.text = f"Total 7d: {fmt_pt(total_7)} XP • 30d: {fmt_pt(int(exp_total_30))} XP"
+                        else:
+                            home.ids.char_xp_total.text = f"Total 30d: {fmt_pt(int(exp_total_30))} XP"
                         home.ids.char_xp_total.theme_text_color = "Primary"
                     else:
                         home.ids.char_xp_total.text = "Histórico de XP indisponível. Toque no ícone ↗ para conferir."
@@ -1241,11 +1554,12 @@ class TibiaToolsApp(MDApp):
     # --------------------
     # Char tab
     # --------------------
-    def search_character(self):
+    def search_character(self, *, silent: bool = False):
         home = self.root.get_screen("home")
         name = (home.ids.char_name.text or "").strip()
         if not name:
-            self.toast("Digite o nome do char.")
+            if not silent:
+                self.toast("Digite o nome do char.")
             return
 
         self._char_set_loading(home, name)
@@ -1441,9 +1755,12 @@ class TibiaToolsApp(MDApp):
                         self._cache_set(f"fav_world:{t.lower()}", w)
                 except Exception:
                     pass
-                self.toast("Char encontrado.")
+                if not silent:
+                    self.toast("Char encontrado.")
             else:
                 self._char_show_error(home, str(payload_or_msg))
+                if not silent:
+                    self.toast(str(payload_or_msg))
 
         def run():
             res = worker()
