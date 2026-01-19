@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 import re
+import time
 from urllib.parse import quote, quote_plus
 
 import requests
@@ -49,9 +50,44 @@ UA = {
 
 
 def _get_json(url: str, timeout: int) -> Dict[str, Any]:
-    r = requests.get(url, timeout=timeout, headers=UA)
-    r.raise_for_status()
-    return r.json()
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, timeout=timeout, headers=UA)
+            # Alguns endpoints podem devolver 5xx temporariamente
+            if int(getattr(r, "status_code", 0) or 0) >= 500:
+                raise requests.HTTPError(f"HTTP {r.status_code}", response=r)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(0.6 * (2 ** attempt))
+            continue
+    if last_exc:
+        raise last_exc
+    return {}
+
+
+def _get_text(url: str, timeout: int, headers: Optional[dict] = None) -> str:
+    """GET com retry básico (evita falhas temporárias)"""
+    hdr = headers or UA
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, timeout=timeout, headers=hdr)
+            if int(getattr(r, "status_code", 0) or 0) >= 500:
+                raise requests.HTTPError(f"HTTP {r.status_code}", response=r)
+            if r.status_code != 200:
+                return ""
+            return r.text or ""
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(0.6 * (2 ** attempt))
+            continue
+    _ = last_exc
+    return ""
 
 
 def fetch_worlds_tibiadata(timeout: int = 12) -> Dict[str, Any]:
@@ -167,10 +203,10 @@ def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> O
     try:
         safe_name = quote_plus(str(name))
         url = TIBIA_CHAR_URL.format(name=safe_name)
-        r = requests.get(url, timeout=timeout, headers=UA)
-        r.raise_for_status()
-
-        soup = BeautifulSoup(r.text, "html.parser")
+        html = _get_text(url, timeout=timeout, headers=UA)
+        if not html:
+            return None
+        soup = BeautifulSoup(html, "html.parser")
         # A página do char tem uma tabela com linhas "Label" / "Value".
         for tr in soup.find_all("tr"):
             tds = tr.find_all("td")
@@ -203,10 +239,7 @@ def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
 
         def fetch_html(u: str) -> str:
             try:
-                r = requests.get(u, timeout=timeout, headers=UA)
-                if r.status_code != 200:
-                    return ""
-                return r.text or ""
+                return _get_text(u, timeout=timeout, headers=UA)
             except Exception:
                 return ""
 
@@ -324,10 +357,9 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
 
         def fetch_html(u: str) -> str:
             try:
-                r = requests.get(u, timeout=timeout, headers=headers)
-                if r.status_code != 200:
+                txt = _get_text(u, timeout=timeout, headers=headers)
+                if not txt:
                     return ""
-                txt = r.text or ""
                 # Detecta páginas de bloqueio/anti-bot (para não tentar parsear "lixo").
                 low = txt.lower()
                 block_markers = (
