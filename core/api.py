@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 import re
+import time
+from urllib.parse import quote, quote_plus
 
 import requests
 from bs4 import BeautifulSoup
@@ -26,6 +28,9 @@ WORLD_URL = "https://api.tibiadata.com/v4/world/{world}"
 
 # GuildStats (fansite) – usado apenas para complementar informações (ex: xp lost em mortes)
 GUILDSTATS_DEATHS_URL = "https://guildstats.eu/character?nick={name}&tab=5"
+
+# GuildStats (fansite) – histórico de experiência (tab=9)
+GUILDSTATS_EXP_URL = "https://guildstats.eu/character?nick={name}&tab=9"
 
 # Tibia.com (oficial) – fallback extra para detectar ONLINE
 # Preferimos a página do personagem (não é paginada como a lista do world).
@@ -45,9 +50,44 @@ UA = {
 
 
 def _get_json(url: str, timeout: int) -> Dict[str, Any]:
-    r = requests.get(url, timeout=timeout, headers=UA)
-    r.raise_for_status()
-    return r.json()
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, timeout=timeout, headers=UA)
+            # Alguns endpoints podem devolver 5xx temporariamente
+            if int(getattr(r, "status_code", 0) or 0) >= 500:
+                raise requests.HTTPError(f"HTTP {r.status_code}", response=r)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(0.6 * (2 ** attempt))
+            continue
+    if last_exc:
+        raise last_exc
+    return {}
+
+
+def _get_text(url: str, timeout: int, headers: Optional[dict] = None) -> str:
+    """GET com retry básico (evita falhas temporárias)"""
+    hdr = headers or UA
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, timeout=timeout, headers=hdr)
+            if int(getattr(r, "status_code", 0) or 0) >= 500:
+                raise requests.HTTPError(f"HTTP {r.status_code}", response=r)
+            if r.status_code != 200:
+                return ""
+            return r.text or ""
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(0.6 * (2 ** attempt))
+            continue
+    _ = last_exc
+    return ""
 
 
 def fetch_worlds_tibiadata(timeout: int = 12) -> Dict[str, Any]:
@@ -69,7 +109,7 @@ def fetch_worlds(timeout: int = 12) -> List[str]:
 
 def fetch_character_tibiadata(name: str, timeout: int = 12) -> Dict[str, Any]:
     """JSON completo do endpoint /v4/character/{name}."""
-    safe_name = requests.utils.quote(name)
+    safe_name = quote(name)
     return _get_json(CHAR_URL.format(name=safe_name), timeout)
 
 
@@ -91,7 +131,7 @@ def fetch_character_snapshot(name: str, timeout: int = 12) -> Dict[str, Any]:
         "level": ch.get("level"),
         "vocation": ch.get("vocation"),
         "status": ch.get("status"),
-        "url": f"https://www.tibia.com/community/?subtopic=characters&name={requests.utils.quote(name)}",
+        "url": f"https://www.tibia.com/community/?subtopic=characters&name={quote(name)}",
     }
 
 
@@ -125,7 +165,7 @@ def is_character_online_tibiadata(name: str, world: Optional[str] = None, timeou
             return False
 
         # Com world: checa lista de online players do mundo
-        safe_world = requests.utils.quote(str(world).strip())
+        safe_world = quote(str(world).strip())
         url = f"https://api.tibiadata.com/v4/world/{safe_world}"
         data = _get_json(url, timeout=timeout)
 
@@ -161,12 +201,12 @@ def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> O
     """
     _ = world  # mantemos o parâmetro por compatibilidade
     try:
-        safe_name = requests.utils.quote_plus(str(name))
+        safe_name = quote_plus(str(name))
         url = TIBIA_CHAR_URL.format(name=safe_name)
-        r = requests.get(url, timeout=timeout, headers=UA)
-        r.raise_for_status()
-
-        soup = BeautifulSoup(r.text, "html.parser")
+        html = _get_text(url, timeout=timeout, headers=UA)
+        if not html:
+            return None
+        soup = BeautifulSoup(html, "html.parser")
         # A página do char tem uma tabela com linhas "Label" / "Value".
         for tr in soup.find_all("tr"):
             tds = tr.find_all("td")
@@ -194,15 +234,12 @@ def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
     """
     try:
         # Em query-string, preferimos + para espaços.
-        safe = requests.utils.quote_plus(name)
+        safe = quote_plus(name)
         base_url = GUILDSTATS_DEATHS_URL.format(name=safe)
 
         def fetch_html(u: str) -> str:
             try:
-                r = requests.get(u, timeout=timeout, headers=UA)
-                if r.status_code != 200:
-                    return ""
-                return r.text or ""
+                return _get_text(u, timeout=timeout, headers=UA)
             except Exception:
                 return ""
 
@@ -288,6 +325,260 @@ def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
         return []
 
 
+def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str, Any]]:
+    """Retorna o histórico (diário) de experiência do GuildStats (tab=9).
+
+    Saída (ordem conforme a tabela):
+      [{"date": "YYYY-MM-DD", "exp_change": "+33,820,426", "exp_change_int": 33820426}, ...]
+
+    Observação: é um complemento (fansite). Se falhar, devolve lista vazia.
+    """
+    try:
+        # O GuildStats é um fansite e pode variar o HTML (às vezes sem <th> no cabeçalho).
+        # Aqui tentamos ser tolerantes: buscamos a tabela "Date / Exp change" por padrão de linhas,
+        # não apenas por texto do cabeçalho.
+
+        # Alguns chars só respondem bem com %20 (quote) em vez de + (quote_plus).
+        enc_quote = quote(name, safe="")
+        enc_plus = quote_plus(name)
+
+        url_variants = [
+            GUILDSTATS_EXP_URL.format(name=enc_quote),
+            GUILDSTATS_EXP_URL.format(name=enc_plus),
+        ]
+
+        # headers um pouco mais "browser-like" para reduzir bloqueios.
+        headers = dict(UA)
+        headers.update({
+            "Referer": "https://guildstats.eu/",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        })
+
+        def fetch_html(u: str) -> str:
+            try:
+                txt = _get_text(u, timeout=timeout, headers=headers)
+                if not txt:
+                    return ""
+                # Detecta páginas de bloqueio/anti-bot (para não tentar parsear "lixo").
+                low = txt.lower()
+                block_markers = (
+                    'checking your browser',
+                    'just a moment',
+                    'cf-browser-verification',
+                    'attention required',
+                    'verify you are human',
+                    'enable javascript',
+                )
+                if any(m in low for m in block_markers):
+                    return ''
+                return txt
+            except Exception:
+                return ""
+
+        html = ""
+        # Tenta sem idioma e com pt/en (algumas páginas mudam layout/texto com lang)
+        for base_url in url_variants:
+            for u in (base_url, base_url + "&lang=pt", base_url + "&lang=en"):
+                html = fetch_html(u)
+                if html:
+                    break
+            if html:
+                break
+
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        def parse_exp_to_int(s: str) -> Optional[int]:
+            # exemplos: "+33,820,426" | "-55,947,218" | "0" | "+200,710,181 👍"
+            txt = (s or "").strip()
+            if not txt:
+                return None
+            # Normaliza NBSP e tenta achar um número.
+            t = txt.replace("\u00a0", " ")
+            # pega primeiro bloco numérico e sinal se existir no começo
+            m = re.search(r"([+-])?\s*(\d[\d\s,\.]*)", t)
+            if not m:
+                return None
+            sign_ch = m.group(1)
+            digits = re.findall(r"\d+", m.group(2) or "")
+            if not digits:
+                return None
+            num = int("".join(digits))
+            return -num if sign_ch == "-" else num
+
+        date_re = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+
+        # Tenta um parsing simples (col0=data, col1=exp_change) percorrendo todos os <tr>.
+        # Isso cobre variações em que a tabela não tem <th> ou muda de classe/estrutura.
+        fast_rows: List[Dict[str, Any]] = []
+        seen_dates = set()
+        for tr in soup.find_all('tr'):
+            tds = tr.find_all('td')
+            if len(tds) < 2:
+                continue
+            dtext = re.sub(r'\s+', ' ', (tds[0].get_text(' ', strip=True) or '')).strip()
+            mdate = date_re.search(dtext)
+            if not mdate:
+                continue
+            date_iso = mdate.group(1)
+            etext = re.sub(r'\s+', ' ', (tds[1].get_text(' ', strip=True) or '')).strip()
+            exp_int = parse_exp_to_int(etext)
+            if exp_int is None:
+                continue
+            # evita pegar colunas pequenas (rank/lvl) por engano
+            if abs(int(exp_int)) not in (0,) and abs(int(exp_int)) < 10_000:
+                continue
+            if date_iso in seen_dates:
+                continue
+            seen_dates.add(date_iso)
+            fast_rows.append({
+                'date': date_iso,
+                'exp_change': etext,
+                'exp_change_int': int(exp_int),
+            })
+
+        if len(fast_rows) >= 3:
+            return fast_rows
+
+        # Heurística robusta: escolhe a tabela em que muitas linhas possuem uma data ISO
+        # e alguma coluna com valores grandes e frequentemente prefixados com +/-. 
+        best = None  # (table, date_idx, exp_idx, score)
+
+        for table in soup.find_all("table"):
+            rows = []
+            max_cols = 0
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(["td", "th"])
+                if not cells:
+                    continue
+                row = [re.sub(r"\s+", " ", (c.get_text(" ", strip=True) or "")).strip() for c in cells]
+                if not row:
+                    continue
+                rows.append(row)
+                max_cols = max(max_cols, len(row))
+
+            if not rows or max_cols < 2:
+                continue
+
+            # normaliza linhas para mesmo tamanho
+            norm_rows = [r + [""] * (max_cols - len(r)) for r in rows]
+
+            # conta datas por coluna
+            date_counts = [0] * max_cols
+            for r in norm_rows:
+                for ci, v in enumerate(r):
+                    if date_re.search(v or ""):
+                        date_counts[ci] += 1
+
+            date_idx = max(range(max_cols), key=lambda i: date_counts[i])
+            # Alguns chars podem ter poucos registros (tracking recente).
+            if date_counts[date_idx] < 3:
+                continue
+
+            # pontua colunas de EXP
+            col_scores = []
+            for ci in range(max_cols):
+                if ci == date_idx:
+                    col_scores.append((-1, ci))
+                    continue
+                exp_count = 0
+                plusminus = 0
+                abs_sum = 0
+                max_abs = 0
+                zero_count = 0
+                for r in norm_rows:
+                    if not date_re.search(r[date_idx] or ""):
+                        continue
+                    v = (r[ci] or "").strip()
+                    if not v:
+                        continue
+                    exp_int = parse_exp_to_int(v)
+                    if exp_int is None:
+                        continue
+                    exp_count += 1
+                    ai = abs(int(exp_int))
+                    abs_sum += ai
+                    max_abs = max(max_abs, ai)
+                    if int(exp_int) == 0:
+                        zero_count += 1
+                    if v.lstrip().startswith(("+", "-")):
+                        plusminus += 1
+
+                if exp_count < 3:
+                    col_scores.append((-1, ci))
+                    continue
+
+                avg_abs = abs_sum / float(exp_count) if exp_count else 0.0
+
+                # Evita confundir com colunas pequenas (lvl/rank) — normalmente exp change tem valores grandes,
+                # mas também pode ter muitos "0". A coluna "Experience" (total) tem valores enormes e SEM +/-. 
+                if plusminus > 0:
+                    if avg_abs < 10_000:
+                        col_scores.append((-1, ci))
+                        continue
+                    # score: +/− domina completamente (senão a coluna "Experience" ganha pelo tamanho).
+                    score = (plusminus * 1_000_000) + (exp_count * 1000) + min(avg_abs, 1_000_000_000) / 1_000_000_000
+                else:
+                    # Sem sinais: aceitaremos apenas se os valores não forem absurdamente grandes
+                    # (para não pegar a coluna "Experience"). Também damos bônus se for muito "0".
+                    if max_abs > 5_000_000:
+                        col_scores.append((-1, ci))
+                        continue
+                    zero_ratio = (zero_count / float(exp_count)) if exp_count else 0.0
+                    score = (exp_count * 1000) + (zero_ratio * 500) + (5_000_000 - max_abs) / 10_000
+                col_scores.append((score, ci))
+
+            best_col = max(col_scores, key=lambda x: x[0])
+            if best_col[0] < 0:
+                continue
+            exp_idx = best_col[1]
+
+            table_score = date_counts[date_idx] + best_col[0]
+            if best is None or table_score > best[3]:
+                best = (table, date_idx, exp_idx, table_score)
+
+        if not best:
+            return []
+
+        table, date_idx, exp_idx, _score = best
+
+        out: List[Dict[str, Any]] = []
+        for tr in table.find_all("tr"):
+            cells = tr.find_all(["td", "th"])
+            if not cells:
+                continue
+            vals = [re.sub(r"\s+", " ", (c.get_text(" ", strip=True) or "")).strip() for c in cells]
+            if date_idx >= len(vals) or exp_idx >= len(vals):
+                continue
+
+            date_txt = vals[date_idx]
+            exp_txt = vals[exp_idx]
+            if not date_txt or not exp_txt:
+                continue
+
+            m = date_re.search(date_txt)
+            if not m:
+                continue
+            date_iso = m.group(1)
+
+            exp_int = parse_exp_to_int(exp_txt)
+            if exp_int is None:
+                continue
+
+            out.append({
+                "date": date_iso,
+                "exp_change": exp_txt,
+                "exp_change_int": int(exp_int),
+            })
+
+        return out
+    except Exception:
+        return []
+
+
 __all__ = [
     "fetch_worlds",
     "fetch_worlds_tibiadata",
@@ -296,4 +587,5 @@ __all__ = [
     "is_character_online_tibiadata",
     "is_character_online_tibia_com",
     "fetch_guildstats_deaths_xp",
+    "fetch_guildstats_exp_changes",
 ]

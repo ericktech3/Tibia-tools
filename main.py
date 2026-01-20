@@ -28,6 +28,7 @@ from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager
+from kivy.utils import platform
 
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
@@ -49,9 +50,11 @@ try:
         is_character_online_tibiadata,
         is_character_online_tibia_com,
         fetch_guildstats_deaths_xp,
+        fetch_guildstats_exp_changes,
     )
     from core.exp_loss import estimate_death_exp_lost
     from core.storage import get_data_dir, safe_read_json, safe_write_json
+    from core import state as fav_state
     from core.bosses import fetch_exevopan_bosses
     from core.boosted import fetch_boosted
     from core.training import TrainingInput, compute_training_plan
@@ -62,11 +65,6 @@ except Exception:
     _CORE_IMPORT_ERROR = traceback.format_exc()
 
 KV_FILE = "tibia_tools.kv"
-
-# Splash animado (frames)
-SPLASH_FPS = 10  # 10fps * 8s = ~80 frames
-SPLASH_FRAME_COUNT = 80
-SPLASH_FRAME_TEMPLATE = "assets/splash_frames/frame_{i:04d}.jpg"
 
 
 class RootSM(ScreenManager):
@@ -100,15 +98,15 @@ class TibiaToolsApp(MDApp):
         self._menu_vocation: Optional[MDDropdownMenu] = None
         self._menu_weapon: Optional[MDDropdownMenu] = None
 
+        # Char search history menu
+        self._menu_char_history: Optional[MDDropdownMenu] = None
+
         # Favorites (chars) UI/status helpers
         self._fav_items = {}  # lower(char_name) -> list item
+        self._fav_status_cache = {}  # lower(char_name) -> last known "online"/"offline"
+        self._fav_world_cache = {}  # lower(char_name) -> cached world
         self._fav_status_job_id = 0
         self._fav_refresh_event = None
-
-        # Splash
-        self._splash_event = None
-        self._splash_index = 0
-        self._splash_done = False
 
     def build(self):
         self.title = "Tibia Tools"
@@ -124,6 +122,15 @@ class TibiaToolsApp(MDApp):
                 halign="center",
             )
 
+        # Preferências (tema) antes de carregar o KV
+        try:
+            self._load_prefs_cache()
+            style = str(self._prefs_get("theme_style", "Dark") or "Dark").strip().title()
+            if style in ("Dark", "Light"):
+                self.theme_cls.theme_style = style
+        except Exception:
+            pass
+
         kv_ok = False
         try:
             kv_path = resource_find(KV_FILE) or KV_FILE
@@ -137,17 +144,10 @@ class TibiaToolsApp(MDApp):
         # ✅ MUITO IMPORTANTE:
         # só agenda funções que usam telas/ids se o KV carregou de verdade.
         if kv_ok and isinstance(root, ScreenManager):
-            # Mostra splash (logo após o presplash do Android)
-            if "splash" in root.screen_names:
-                try:
-                    root.current = "splash"
-                except Exception:
-                    pass
-                Clock.schedule_once(lambda *_: self._start_splash(), 0)
-
             self.load_favorites()
             self._load_prefs_cache()
             Clock.schedule_once(lambda *_: self._apply_settings_to_ui(), 0)
+            Clock.schedule_once(lambda *_: self._maybe_start_fav_monitor_service(), 0.2)
             Clock.schedule_once(lambda *_: self._set_initial_home_tab(), 0)
             Clock.schedule_once(lambda *_: self.dashboard_refresh(), 0)
 
@@ -163,96 +163,147 @@ class TibiaToolsApp(MDApp):
         return root
 
     # --------------------
-    # Splash
+    # Deep-link / Notification click handling (Android)
     # --------------------
-    def _start_splash(self, *_):
-        """Inicia animação de splash por frames (mais compatível que vídeo no Android)."""
-        if self._splash_done:
+    def _handle_android_intent(self) -> None:
+        """Se o app foi aberto por uma notificação do serviço, abre a aba Char e (opcionalmente) dispara a busca.
+
+        O serviço envia extras no Intent:
+        - tt_open_tab: "tab_char"
+        - tt_char_name: nome do char (opcional)
+        - tt_auto_search: bool
+        - tt_event_type: "online"/"level"/"death" (opcional)
+        """
+        if not self._is_android():
             return
         try:
-            sm = self.root
-            if not isinstance(sm, ScreenManager) or "splash" not in sm.screen_names:
-                return
-            splash = sm.get_screen("splash")
-            img = splash.ids.get("splash_img")
-            if img is None:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            Intent = autoclass("android.content.Intent")
+
+            act = PythonActivity.mActivity
+            intent = act.getIntent()
+            if intent is None:
                 return
 
-            # Garante 1o frame na tela
-            img.source = SPLASH_FRAME_TEMPLATE.format(i=1)
+            open_tab = None
+            char_name = None
+            auto_search = False
+            event_type = None
             try:
-                img.reload()
+                open_tab = intent.getStringExtra("tt_open_tab")
+            except Exception:
+                open_tab = None
+            try:
+                char_name = intent.getStringExtra("tt_char_name")
+            except Exception:
+                char_name = None
+            try:
+                event_type = intent.getStringExtra("tt_event_type")
+            except Exception:
+                event_type = None
+            try:
+                auto_search = bool(intent.getBooleanExtra("tt_auto_search", False))
+            except Exception:
+                auto_search = False
+
+            if not (open_tab or char_name or event_type):
+                return
+
+            sig = f"{open_tab}|{char_name}|{auto_search}|{event_type}"
+            if getattr(self, "_last_intent_sig", None) == sig:
+                return
+            self._last_intent_sig = sig
+
+            # Garante que estamos na Home e na aba Char
+            try:
+                self.go("home")
+            except Exception:
+                pass
+            try:
+                self.select_home_tab("tab_char")
             except Exception:
                 pass
 
-            self._splash_index = 1
-
-            # Agenda ticks
-            if self._splash_event is not None:
+            def apply_and_search(*_):
                 try:
-                    self._splash_event.cancel()
+                    home = self.root.get_screen("home")
+                    if char_name and "char_name" in home.ids:
+                        home.ids.char_name.text = str(char_name)
+                    if auto_search and char_name:
+                        # silencioso: não spammar toast ao tocar na notificação
+                        self.search_character(silent=True)
                 except Exception:
                     pass
-            self._splash_event = Clock.schedule_interval(self._splash_tick, 1.0 / float(SPLASH_FPS))
-        except Exception:
-            # Se der qualquer erro, não trava o app
-            self._finish_splash()
 
-    def _splash_tick(self, dt):
-        if self._splash_done:
-            return False
-        try:
-            sm = self.root
-            if not isinstance(sm, ScreenManager):
-                return False
-            splash = sm.get_screen("splash")
-            img = splash.ids.get("splash_img")
-            if img is None:
-                return False
+            # Deixa a UI terminar de montar antes de mexer nos ids
+            Clock.schedule_once(apply_and_search, 0.15)
 
-            self._splash_index += 1
-            if self._splash_index > SPLASH_FRAME_COUNT:
-                self._finish_splash()
-                return False
-
-            img.source = SPLASH_FRAME_TEMPLATE.format(i=self._splash_index)
-            # reload() evita alguns devices mostrando branco em troca de source
+            # Evita re-disparar ao voltar de background: limpa o Intent atual
             try:
-                img.reload()
-            except Exception:
-                pass
-            return True
-        except Exception:
-            self._finish_splash()
-            return False
-
-    def skip_splash(self, *_):
-        """Permite pular a animação tocando na tela."""
-        self._finish_splash()
-
-    def _finish_splash(self, *_):
-        if self._splash_done:
-            return
-        self._splash_done = True
-        try:
-            if self._splash_event is not None:
+                empty = Intent()
                 try:
-                    self._splash_event.cancel()
+                    empty.setAction(f"TT_HANDLED_{int(time.time()*1000)}")
                 except Exception:
                     pass
-                self._splash_event = None
+                act.setIntent(empty)
+            except Exception:
+                # fallback: remove extras
+                try:
+                    intent.removeExtra("tt_open_tab")
+                    intent.removeExtra("tt_char_name")
+                    intent.removeExtra("tt_auto_search")
+                    intent.removeExtra("tt_event_type")
+                except Exception:
+                    pass
         except Exception:
-            pass
-        try:
-            sm = self.root
-            if isinstance(sm, ScreenManager) and "home" in sm.screen_names:
-                sm.current = "home"
-        except Exception:
-            pass
+            return
 
     # --------------------
     # Navigation
     # --------------------
+
+    def on_start(self):
+        """Android 13+ (SDK 33+) pode exigir permissão de notificação.
+
+        Em vários devices, o helper `android.permissions` não dispara o popup e/ou falha silenciosamente.
+        Aqui fazemos o check + request via Activity.requestPermissions (JNI), e re-tentamos com throttle.
+        """
+        # Deep-link de notificação: processa logo no start (após o KV estar pronto)
+        try:
+            Clock.schedule_once(lambda *_: self._handle_android_intent(), 1.0)
+        except Exception:
+            pass
+
+        try:
+            if not self._is_android():
+                return
+            if self._android_sdk_int() < 33:
+                return
+            # throttle para evitar spam caso o usuário negue
+            now = int(time.time())
+            last = int(self._prefs_get("post_notif_last_req_ts", 0) or 0)
+            if now - last < 60:
+                return
+            # Se já está concedido, ainda precisamos checar se o usuário bloqueou o app/canal.
+            if self._post_notif_permission_granted():
+                if (not self._notifications_globally_enabled()) or (not self._channel_enabled("tibia_tools_watch_fg")):
+                    # aqui não existe popup, só Configurações
+                    Clock.schedule_once(lambda *_: self._prompt_enable_notifications_dialog(), 0.2)
+                return
+            self._prefs_set("post_notif_last_req_ts", now)
+            from kivy.clock import Clock
+            Clock.schedule_once(lambda *_: self._ensure_post_notifications_permission(auto_open_settings=False), 0.8)
+        except Exception:
+            pass
+
+    def on_resume(self):
+        # Quando o usuário toca na notificação com o app em background, isso garante o deep-link.
+        try:
+            Clock.schedule_once(lambda *_: self._handle_android_intent(), 0.2)
+        except Exception:
+            pass
+
     def go(self, screen_name: str):
         sm = self.root
         if isinstance(sm, ScreenManager) and screen_name in sm.screen_names:
@@ -272,6 +323,17 @@ class TibiaToolsApp(MDApp):
             pass
 
     def open_more_target(self, target: str):
+        # Itens que abrem dialog/ações, não telas
+        if target == "about":
+            self.show_about()
+            return
+        if target == "changelog":
+            self.show_changelog()
+            return
+        if target == "feedback":
+            self.open_feedback()
+            return
+
         self.go(target)
         if target == "bosses":
             self._bosses_refresh_worlds()
@@ -281,6 +343,133 @@ class TibiaToolsApp(MDApp):
             self._ensure_training_menus()
         elif target == "settings":
             self._apply_settings_to_ui()
+
+    def show_about(self):
+        txt = (
+            "Tibia Tools\n"
+            "\n"
+            "• Consulta de personagens (status, guild, houses, mortes)\n"
+            "• Favoritos com monitoramento em background (online/morte/level)\n"
+            "• Boosted / Bosses / Treino / Hunt Analyzer / Imbuements\n"
+            "\n"
+            "Observações:\n"
+            "- Dados de status vêm de TibiaData e Tibia.com (quando necessário).\n"
+            "- Histórico de XP (30 dias) usa um fansite como fonte auxiliar.\n"
+            "\n"
+            "Dica: toque em qualquer notificação de favorito para abrir a aba de personagem automaticamente."
+        )
+        self._show_text_dialog("Sobre", txt)
+
+    def show_changelog(self):
+        txt = (
+            "Novidades\n\n"
+            "- Notificações em background para Favoritos: ONLINE, MORTE e LEVEL UP\n"
+            "- Toque na notificação abre o app na aba do personagem e já pesquisa o char\n"
+            "- Histórico de busca de personagens (botão de relógio)\n"
+            "- Card de XP feita: total 7d e 30d (quando disponível)\n"
+            "- Configuração de tema claro/escuro"
+        )
+        self._show_text_dialog("Novidades", txt)
+
+    def open_feedback(self):
+        # Abre issues do GitHub se houver repo configurado; senão, abre o próprio repo.
+        url = str(self._prefs_get("repo_url", "") or "").strip()
+        if url and "github.com" in url.lower():
+            if "/issues" not in url.lower():
+                url = url.rstrip("/") + "/issues/new"
+            try:
+                webbrowser.open(url)
+                return
+            except Exception:
+                pass
+        self.toast("Defina a URL do repo nas Configurações para abrir o feedback.")
+
+    # --------------------
+    # Char tab helpers (history / clear)
+    # --------------------
+    def clear_char_search(self):
+        try:
+            home = self.root.get_screen("home")
+            if "char_name" in home.ids:
+                home.ids.char_name.text = ""
+                home.ids.char_name.focus = True
+        except Exception:
+            pass
+
+    def _get_char_history(self) -> list[str]:
+        try:
+            hist = self._prefs_get("char_history", []) or []
+            if not isinstance(hist, list):
+                return []
+            out = []
+            for x in hist:
+                s = str(x or "").strip()
+                if s:
+                    out.append(s)
+            return out
+        except Exception:
+            return []
+
+    def _add_to_char_history(self, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            return
+        try:
+            hist = self._get_char_history()
+            # remove duplicates (case-insensitive)
+            hist = [h for h in hist if h.strip().lower() != name.lower()]
+            hist.insert(0, name)
+            hist = hist[:12]
+            self._prefs_set("char_history", hist)
+        except Exception:
+            pass
+
+    def open_char_history_menu(self):
+        try:
+            home = self.root.get_screen("home")
+            anchor = home.ids.get("char_name")
+        except Exception:
+            return
+
+        hist = self._get_char_history()
+        if not hist:
+            self.toast("Sem histórico ainda.")
+            return
+
+        def pick(n: str):
+            try:
+                home.ids.char_name.text = n
+                # fecha menu e foca no campo
+                try:
+                    if self._menu_char_history:
+                        self._menu_char_history.dismiss()
+                except Exception:
+                    pass
+                home.ids.char_name.focus = True
+            except Exception:
+                pass
+
+        menu_items = [
+            {
+                "viewclass": "OneLineListItem",
+                "text": n,
+                "on_release": (lambda x=n: pick(x)),
+            }
+            for n in hist
+        ]
+
+        try:
+            if self._menu_char_history:
+                self._menu_char_history.dismiss()
+        except Exception:
+            pass
+        self._menu_char_history = MDDropdownMenu(
+            caller=anchor,
+            items=menu_items,
+            width_mult=4,
+            max_height=dp(320),
+        )
+        self._menu_char_history.open()
 
     
     # --------------------
@@ -295,6 +484,313 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
         self.toast(f"{title}: {message}")
+
+
+    # --------------------
+    # Background service: monitor favorites even with the app closed
+    # --------------------
+    def _is_android(self) -> bool:
+        return platform == "android"
+
+    def _android_sdk_int(self) -> int:
+        if not self._is_android():
+            return 0
+        try:
+            from jnius import autoclass  # type: ignore
+            VERSION = autoclass("android.os.Build$VERSION")
+            return int(VERSION.SDK_INT)
+        except Exception:
+            return 0
+
+    def _post_notif_permission_granted(self) -> bool:
+        """Check via Activity.checkSelfPermission (não depende de android.permissions)."""
+        if not self._is_android():
+            return True
+        if self._android_sdk_int() < 33:
+            return True
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            PackageManager = autoclass("android.content.pm.PackageManager")
+            activity = PythonActivity.mActivity
+            perm = "android.permission.POST_NOTIFICATIONS"
+            return activity.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
+        except Exception:
+            return False
+
+    def _notifications_globally_enabled(self) -> bool:
+        """Verifica se o usuário bloqueou notificações do app (toggle do sistema).
+
+        Observação: isso é diferente do runtime permission (Android 13+).
+        Em muitos aparelhos (MIUI/OneUI/etc.), o usuário pode ter notificações desligadas
+        mesmo com a permissão concedida — e aí NÃO existe popup, só Configurações.
+        """
+        if not self._is_android():
+            return True
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            Context = autoclass("android.content.Context")
+            activity = PythonActivity.mActivity
+            nm = activity.getSystemService(Context.NOTIFICATION_SERVICE)
+            # API 24+
+            try:
+                return bool(nm.areNotificationsEnabled())
+            except Exception:
+                return True
+        except Exception:
+            return True
+
+    def _channel_enabled(self, channel_id: str) -> bool:
+        if not self._is_android():
+            return True
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            Context = autoclass("android.content.Context")
+            NotificationManager = autoclass("android.app.NotificationManager")
+            activity = PythonActivity.mActivity
+            nm = activity.getSystemService(Context.NOTIFICATION_SERVICE)
+            ch = nm.getNotificationChannel(channel_id)
+            if ch is None:
+                return True
+            return int(ch.getImportance()) != int(NotificationManager.IMPORTANCE_NONE)
+        except Exception:
+            return True
+
+    def _prompt_enable_notifications_dialog(self):
+        """Mostra um dialog com atalho para Configurações de notificação do app."""
+        try:
+            txt = (
+                "As notificações do Tibia Tools estão desativadas no sistema.\n"
+                "Toque em 'Abrir configurações' e ative Notificações."
+            )
+            dlg = MDDialog(
+                title="Ativar notificações",
+                text=txt,
+                buttons=[
+                    MDFlatButton(text="AGORA NÃO", on_release=lambda *_: dlg.dismiss()),
+                    MDFlatButton(text="ABRIR CONFIGURAÇÕES", on_release=lambda *_: (dlg.dismiss(), self._open_app_notification_settings())),
+                ],
+            )
+            dlg.open()
+        except Exception:
+            # fallback
+            try:
+                self.toast("Ative as notificações nas Configurações do app")
+            except Exception:
+                pass
+    def _ensure_post_notifications_permission(self, on_result=None, auto_open_settings: bool = True) -> bool:
+        """Android 13+ exige POST_NOTIFICATIONS.
+
+        Retorna True se já está OK (ou não precisa).
+        Se precisar pedir, dispara o prompt e retorna False.
+        Se `on_result` for passado, chama com (granted: bool) quando o usuário responder.
+
+        `auto_open_settings`: se True e o usuário negar, abre a tela de notificações do app.
+        """
+        if not self._is_android():
+            return True
+
+        if self._android_sdk_int() < 33:
+            return True
+
+        # 1) check robusto
+        if self._post_notif_permission_granted():
+            # Mesmo com permissão, o usuário pode ter bloqueado notificações do app/canal.
+            if (not self._notifications_globally_enabled()) or (not self._channel_enabled("tibia_tools_watch_fg")):
+                try:
+                    self.toast("Notificações desativadas no sistema")
+                except Exception:
+                    pass
+                if auto_open_settings:
+                    try:
+                        self._open_app_notification_settings()
+                    except Exception:
+                        pass
+                return False
+            return True
+
+        # 2) request robusto via Activity.requestPermissions
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            activity = PythonActivity.mActivity
+            perm = "android.permission.POST_NOTIFICATIONS"
+            req_code = 7331
+
+            def _after_check(*_):
+                granted = self._post_notif_permission_granted()
+                if not granted:
+                    try:
+                        self.toast("Ative a permissão de notificações para o Tibia Tools")
+                        if auto_open_settings:
+                            self._open_app_notification_settings()
+                    except Exception:
+                        pass
+                if on_result:
+                    try:
+                        on_result(granted)
+                    except Exception:
+                        pass
+
+            # O popup só aparece se chamado na UI thread.
+            try:
+                from android.runnable import run_on_ui_thread  # type: ignore
+
+                @run_on_ui_thread
+                def _req():
+                    try:
+                        activity.requestPermissions([perm], req_code)
+                    except Exception:
+                        # fallback para versões antigas
+                        try:
+                            ActivityCompat = autoclass("androidx.core.app.ActivityCompat")
+                            ActivityCompat.requestPermissions(activity, [perm], req_code)
+                        except Exception:
+                            pass
+
+                _req()
+            except Exception:
+                try:
+                    activity.requestPermissions([perm], req_code)
+                except Exception:
+                    pass
+
+            # Não temos callback direto aqui; checa depois.
+            from kivy.clock import Clock
+            Clock.schedule_once(_after_check, 1.2)
+            Clock.schedule_once(_after_check, 2.5)
+            return False
+        except Exception:
+            # Se não der pra pedir, guia o usuário para Configurações.
+            try:
+                self.toast("Não foi possível abrir o popup de permissão. Abra as Configurações do app e ative Notificações.")
+                if auto_open_settings:
+                    self._open_app_notification_settings()
+            except Exception:
+                pass
+            if on_result:
+                try:
+                    on_result(False)
+                except Exception:
+                    pass
+            return False
+
+
+    def _open_app_notification_settings(self):
+        """Abre a tela de notificações do app."""
+        if not self._is_android():
+            return
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            Intent = autoclass("android.content.Intent")
+            Settings = autoclass("android.provider.Settings")
+            Uri = autoclass("android.net.Uri")
+            activity = PythonActivity.mActivity
+            pkg = activity.getPackageName()
+
+            # Preferir tela específica de notificação (quando disponível)
+            try:
+                intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                intent.putExtra(Settings.EXTRA_APP_PACKAGE, pkg)
+            except Exception:
+                intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                intent.setData(Uri.parse("package:" + pkg))
+
+            activity.startActivity(intent)
+        except Exception:
+            pass
+    def _start_fav_monitor_service(self):
+        if not self._is_android():
+            return
+
+        def _do_start():
+            try:
+                from jnius import autoclass  # type: ignore
+                PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                PythonService = autoclass("org.kivy.android.PythonService")
+                mActivity = PythonActivity.mActivity
+                # Inicia o serviço (foreground notification será ajustada dentro do service/main.py)
+                PythonService.start(mActivity, "Tibia Tools", "Monitorando favoritos")
+                return
+            except Exception:
+                # Fallback (older API)
+                try:
+                    from android import AndroidService  # type: ignore
+                    s = AndroidService("Tibia Tools", "Monitorando favoritos")
+                    s.start("start")
+                except Exception:
+                    pass
+
+        # Android 13+: só inicia depois da permissão
+        ok = self._ensure_post_notifications_permission(on_result=lambda granted: _do_start() if granted else None, auto_open_settings=True)
+        if ok:
+            _do_start()
+
+
+    def _stop_fav_monitor_service(self):
+        if not self._is_android():
+            return
+        try:
+            from jnius import autoclass  # type: ignore
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            PythonService = autoclass("org.kivy.android.PythonService")
+            mActivity = PythonActivity.mActivity
+            PythonService.stop(mActivity)
+        except Exception:
+            try:
+                from android import AndroidService  # type: ignore
+                s = AndroidService("Tibia Tools", "Monitorando favoritos")
+                s.stop()
+            except Exception:
+                pass
+
+    def _maybe_start_fav_monitor_service(self):
+        if not self._is_android():
+            return
+        try:
+            st = fav_state.load_state(self.data_dir)
+            if bool(st.get("monitoring", False)):
+                self._start_fav_monitor_service()
+        except Exception:
+            pass
+
+    def _sync_bg_monitor_state_from_ui(self):
+        """Save background-monitor settings into favorites.json (shared with the service)."""
+        try:
+            scr = self.root.get_screen("settings")
+            monitoring = bool(scr.ids.set_bg_monitor.active)
+            notify_online = bool(scr.ids.set_bg_notify_online.active)
+            notify_level = bool(scr.ids.set_bg_notify_level.active)
+            notify_death = bool(scr.ids.set_bg_notify_death.active)
+            try:
+                interval = int((scr.ids.set_bg_interval.text or "60").strip())
+            except Exception:
+                interval = 60
+        except Exception:
+            return
+
+        try:
+            st = fav_state.load_state(self.data_dir)
+            if not isinstance(st, dict):
+                st = {}
+            st["favorites"] = [str(x) for x in (self.favorites or [])]
+            st["monitoring"] = monitoring
+            st["notify_fav_online"] = notify_online
+            st["notify_fav_level"] = notify_level
+            st["notify_fav_death"] = notify_death
+            st["interval_seconds"] = max(20, min(600, int(interval)))
+            fav_state.save_state(self.data_dir, st)
+        except Exception:
+            pass
+
+        # start/stop service immediately
+        if monitoring:
+            self._start_fav_monitor_service()
+        else:
+            self._stop_fav_monitor_service()
 
     def dashboard_refresh(self, *_):
         """Atualiza o resumo do Dashboard usando cache e, se possível, dados ao vivo."""
@@ -466,20 +962,38 @@ class TibiaToolsApp(MDApp):
 # --------------------
     # Storage
     # --------------------
+
     def load_favorites(self):
-        data = safe_read_json(self.fav_path, default=[])
-        if isinstance(data, list):
-            self.favorites = [str(x) for x in data]
-        else:
-            self.favorites = []
+        # favorites.json is now a shared state file used by the background service.
+        # We still keep self.favorites as a simple list for the UI.
+        try:
+            st = fav_state.load_state(self.data_dir)
+            fav = st.get("favorites", []) if isinstance(st, dict) else []
+            if isinstance(fav, list):
+                self.favorites = [str(x) for x in fav]
+            else:
+                self.favorites = []
+        except Exception:
+            # legacy fallback (list)
+            data = safe_read_json(self.fav_path, default=[])
+            if isinstance(data, list):
+                self.favorites = [str(x) for x in data]
+            else:
+                self.favorites = []
+
 
     def save_favorites(self):
-        safe_write_json(self.fav_path, self.favorites)
+        # persist using shared state format (dict) to keep the background service in sync
+        try:
+            st = fav_state.load_state(self.data_dir)
+            if not isinstance(st, dict):
+                st = {}
+            st["favorites"] = [str(x) for x in (self.favorites or [])]
+            fav_state.save_state(self.data_dir, st)
+        except Exception:
+            # fallback: old format
+            safe_write_json(self.fav_path, self.favorites)
 
-
-    # --------------------
-    # Prefs / Cache (modo offline inteligente)
-    # --------------------
     def _load_prefs_cache(self):
         self.prefs = safe_read_json(self.prefs_path, default={}) or {}
         if not isinstance(self.prefs, dict):
@@ -549,24 +1063,57 @@ class TibiaToolsApp(MDApp):
         # abre direto no Dashboard
         self.select_home_tab("tab_dashboard")
 
+
     def _apply_settings_to_ui(self):
         try:
             scr = self.root.get_screen("settings")
         except Exception:
             return
         try:
+            # Tema
+            try:
+                style = str(self._prefs_get("theme_style", "Dark") or "Dark").strip().title()
+                scr.ids.set_theme_light.active = (style == "Light")
+            except Exception:
+                pass
             scr.ids.set_notify_boosted.active = bool(self._prefs_get("notify_boosted", True))
             scr.ids.set_notify_boss_high.active = bool(self._prefs_get("notify_boss_high", True))
             scr.ids.set_repo_url.text = str(self._prefs_get("repo_url", "") or "")
         except Exception:
             pass
 
+        # Background monitor (shared state file)
+        try:
+            st = fav_state.load_state(self.data_dir)
+            scr.ids.set_bg_monitor.active = bool(st.get("monitoring", False))
+            scr.ids.set_bg_notify_online.active = bool(st.get("notify_fav_online", True))
+            scr.ids.set_bg_notify_level.active = bool(st.get("notify_fav_level", True))
+            scr.ids.set_bg_notify_death.active = bool(st.get("notify_fav_death", True))
+            scr.ids.set_bg_interval.text = str(int(st.get("interval_seconds", 60) or 60))
+        except Exception:
+            pass
+
+
     def settings_save(self):
         try:
             scr = self.root.get_screen("settings")
+            # Tema
+            try:
+                theme_style = "Light" if bool(scr.ids.set_theme_light.active) else "Dark"
+                self._prefs_set("theme_style", theme_style)
+                try:
+                    self.theme_cls.theme_style = theme_style
+                except Exception:
+                    pass
+            except Exception:
+                pass
             self._prefs_set("notify_boosted", bool(scr.ids.set_notify_boosted.active))
             self._prefs_set("notify_boss_high", bool(scr.ids.set_notify_boss_high.active))
             self._prefs_set("repo_url", (scr.ids.set_repo_url.text or "").strip())
+
+            # Background monitor settings (favorites online/death/level)
+            self._sync_bg_monitor_state_from_ui()
+
             scr.ids.set_status.text = "Salvo."
             self.toast("Configurações salvas.")
         except Exception:
@@ -729,6 +1276,21 @@ class TibiaToolsApp(MDApp):
             ditem = OneLineIconListItem(text="Aguardando...")
             ditem.add_widget(IconLeftWidget(icon="skull-outline"))
             home.ids.char_deaths_list.add_widget(ditem)
+
+            # XP últimos 30 dias (GuildStats)
+            if "char_xp_list" in home.ids:
+                try:
+                    home.ids.char_xp_total.text = "Carregando histórico de XP..."
+                    home.ids.char_xp_total.theme_text_color = "Hint"
+                except Exception:
+                    pass
+                try:
+                    home.ids.char_xp_list.clear_widgets()
+                    xitem = OneLineIconListItem(text="Buscando histórico de XP...")
+                    xitem.add_widget(IconLeftWidget(icon="chart-line"))
+                    home.ids.char_xp_list.add_widget(xitem)
+                except Exception:
+                    pass
             return
 
         # Fallback antigo
@@ -752,6 +1314,21 @@ class TibiaToolsApp(MDApp):
             ditem = OneLineIconListItem(text="—")
             ditem.add_widget(IconLeftWidget(icon="skull-outline"))
             home.ids.char_deaths_list.add_widget(ditem)
+
+            # XP card
+            if "char_xp_list" in home.ids:
+                try:
+                    home.ids.char_xp_total.text = "—"
+                    home.ids.char_xp_total.theme_text_color = "Hint"
+                except Exception:
+                    pass
+                try:
+                    home.ids.char_xp_list.clear_widgets()
+                    xitem = OneLineIconListItem(text="Sem dados.")
+                    xitem.add_widget(IconLeftWidget(icon="chart-line"))
+                    home.ids.char_xp_list.add_widget(xitem)
+                except Exception:
+                    pass
             return
 
         if "char_status" in home.ids:
@@ -769,6 +1346,14 @@ class TibiaToolsApp(MDApp):
         houses = payload.get("houses") or []
         deaths = payload.get("deaths", [])
 
+        # XP últimos 30 dias (GuildStats tab=9)
+        exp_rows_30 = payload.get("exp_rows_30") or []
+        exp_total_30 = payload.get("exp_total_30")
+        try:
+            home.char_xp_source_url = str(payload.get("gs_exp_url") or "")
+        except Exception:
+            pass
+
         try:
             home._last_char_payload = payload
         except Exception:
@@ -776,6 +1361,7 @@ class TibiaToolsApp(MDApp):
         try:
             if title:
                 self._prefs_set("last_char", title)
+                self._add_to_char_history(title)
         except Exception:
             pass
         try:
@@ -844,6 +1430,85 @@ class TibiaToolsApp(MDApp):
                 full_h = "\n".join(houses_list)
                 add_two("Houses", f"{len(houses_list)} casas", "home", "Houses", full_h)
 
+            # ----------------------------
+            # Card: XP últimos 30 dias
+            # ----------------------------
+            if "char_xp_list" in home.ids:
+                def fmt_pt(n: int) -> str:
+                    try:
+                        s = f"{abs(int(n)):,}".replace(",", ".")
+                    except Exception:
+                        s = str(n)
+                    return ("-" if int(n) < 0 else "+") + s
+
+                try:
+                    xlist = home.ids.char_xp_list
+                    xlist.clear_widgets()
+
+                    rows = exp_rows_30 if isinstance(exp_rows_30, list) else []
+                    if isinstance(exp_total_30, (int, float)) and rows:
+                        # também calcula últimos 7 dias com base na data mais recente do histórico
+                        total_7 = None
+                        try:
+                            ref_dates = []
+                            for rr in rows:
+                                ds0 = str(rr.get("date") or "").strip()
+                                if not ds0:
+                                    continue
+                                try:
+                                    ref_dates.append(datetime.fromisoformat(ds0).date())
+                                except Exception:
+                                    continue
+                            ref = max(ref_dates) if ref_dates else datetime.utcnow().date()
+                            cutoff7 = ref - timedelta(days=7)
+                            s7 = 0
+                            for rr in rows:
+                                ds0 = str(rr.get("date") or "").strip()
+                                if not ds0:
+                                    continue
+                                try:
+                                    d0 = datetime.fromisoformat(ds0).date()
+                                except Exception:
+                                    continue
+                                if d0 < cutoff7:
+                                    continue
+                                try:
+                                    s7 += int(rr.get("exp_change_int") or 0)
+                                except Exception:
+                                    continue
+                            total_7 = int(s7)
+                        except Exception:
+                            total_7 = None
+
+                        if isinstance(total_7, int):
+                            home.ids.char_xp_total.text = f"Total 7d: {fmt_pt(total_7)} XP • 30d: {fmt_pt(int(exp_total_30))} XP"
+                        else:
+                            home.ids.char_xp_total.text = f"Total 30d: {fmt_pt(int(exp_total_30))} XP"
+                        home.ids.char_xp_total.theme_text_color = "Primary"
+                    else:
+                        home.ids.char_xp_total.text = "Histórico de XP indisponível. Toque no ícone ↗ para conferir."
+                        home.ids.char_xp_total.theme_text_color = "Hint"
+
+                    if not rows:
+                        it = OneLineIconListItem(text="Sem dados.")
+                        it.add_widget(IconLeftWidget(icon="chart-line"))
+                        xlist.add_widget(it)
+                    else:
+                        for r in rows[:30]:
+                            ds = str(r.get("date") or "").strip()
+                            ev = r.get("exp_change_int")
+                            try:
+                                ev_i = int(ev)
+                            except Exception:
+                                continue
+                            sec = f"{fmt_pt(ev_i)} XP"
+                            icon = "trending-up" if ev_i >= 0 else "trending-down"
+                            item = TwoLineIconListItem(text=ds, secondary_text=sec)
+                            item.add_widget(IconLeftWidget(icon=icon))
+                            xlist.add_widget(item)
+                except Exception:
+                    pass
+
             dlist = home.ids.char_deaths_list
             dlist.clear_widgets()
 
@@ -889,15 +1554,20 @@ class TibiaToolsApp(MDApp):
     # --------------------
     # Char tab
     # --------------------
-    def search_character(self):
+    def search_character(self, *, silent: bool = False):
         home = self.root.get_screen("home")
         name = (home.ids.char_name.text or "").strip()
         if not name:
-            self.toast("Digite o nome do char.")
+            if not silent:
+                self.toast("Digite o nome do char.")
             return
 
         self._char_set_loading(home, name)
         home.char_last_url = ""
+        try:
+            home.char_xp_source_url = ""
+        except Exception:
+            pass
 
         def worker():
             try:
@@ -974,6 +1644,42 @@ class TibiaToolsApp(MDApp):
                 if not isinstance(deaths, list):
                     deaths = []
 
+                # ----------------------------
+                # XP últimos ~30 dias (GuildStats tab=9)
+                # ----------------------------
+                # Preferimos %20 (quote) — em alguns casos o GuildStats não responde bem com "+".
+                gs_exp_url = f"https://guildstats.eu/character?nick={urllib.parse.quote((title or name), safe='')}&tab=9"
+                exp_rows_30 = []
+                exp_total_30 = None
+                try:
+                    rows = fetch_guildstats_exp_changes(title or name)
+                    if rows:
+                        dates = []
+                        for r in rows:
+                            ds = str(r.get("date") or "")
+                            try:
+                                dates.append(datetime.fromisoformat(ds).date())
+                            except Exception:
+                                pass
+                        ref = max(dates) if dates else datetime.utcnow().date()
+                        cutoff = ref - timedelta(days=30)
+
+                        for r in rows:
+                            ds = str(r.get("date") or "")
+                            try:
+                                d = datetime.fromisoformat(ds).date()
+                            except Exception:
+                                continue
+                            if d < cutoff:
+                                continue
+                            exp_rows_30.append(r)
+
+                        exp_rows_30.sort(key=lambda x: x.get("date", ""), reverse=True)
+                        exp_total_30 = int(sum(int(r.get("exp_change_int") or 0) for r in exp_rows_30))
+                except Exception:
+                    exp_rows_30 = []
+                    exp_total_30 = None
+
                 # XP lost por morte:
                 # 1) tenta GuildStats (fansite) por ordem (mais recente -> mais recente)
                 # 2) se falhar/bloquear, calcula a estimativa offline (igual GuildStats: promoted + 7 blessings)
@@ -1017,6 +1723,11 @@ class TibiaToolsApp(MDApp):
                     "guild_line": guild_line,
                     "house_line": house_line,
                     "deaths": deaths,
+
+                    # XP 30 dias (GuildStats)
+                    "exp_rows_30": exp_rows_30,
+                    "exp_total_30": exp_total_30,
+                    "gs_exp_url": gs_exp_url,
                 }
                 return True, payload, url
             except Exception as e:
@@ -1026,11 +1737,30 @@ class TibiaToolsApp(MDApp):
             ok, payload_or_msg, url = res
             home.char_last_url = url
 
+            try:
+                if ok and isinstance(payload_or_msg, dict):
+                    home.char_xp_source_url = str(payload_or_msg.get("gs_exp_url") or "")
+                else:
+                    home.char_xp_source_url = ""
+            except Exception:
+                home.char_xp_source_url = ""
+
             if ok:
                 self._char_show_result(home, payload_or_msg)
-                self.toast("Char encontrado.")
+                # cache do world para a aba Favoritos
+                try:
+                    w = str((payload_or_msg or {}).get("world") or "").strip()
+                    t = str((payload_or_msg or {}).get("title") or "").strip()
+                    if w and w.upper() != "N/A" and t:
+                        self._cache_set(f"fav_world:{t.lower()}", w)
+                except Exception:
+                    pass
+                if not silent:
+                    self.toast("Char encontrado.")
             else:
                 self._char_show_error(home, str(payload_or_msg))
+                if not silent:
+                    self.toast(str(payload_or_msg))
 
         def run():
             res = worker()
@@ -1041,6 +1771,15 @@ class TibiaToolsApp(MDApp):
     def open_last_in_browser(self):
         home = self.root.get_screen("home")
         url = getattr(home, "char_last_url", "") or ""
+        if not url:
+            self.toast("Sem link ainda. Faça uma busca primeiro.")
+            return
+        webbrowser.open(url)
+
+    def open_char_xp_source(self):
+        """Abre a fonte do histórico de XP (GuildStats tab=9) no navegador."""
+        home = self.root.get_screen("home")
+        url = getattr(home, "char_xp_source_url", "") or ""
         if not url:
             self.toast("Sem link ainda. Faça uma busca primeiro.")
             return
@@ -1096,7 +1835,7 @@ class TibiaToolsApp(MDApp):
             self._fav_items[name.strip().lower()] = item
             container.add_widget(item)
 
-            if force or state is None or str(state).strip().lower() != "online":
+            if force or state is None or self._fav_status_needs_refresh(name, ttl_seconds=45):
                 names_to_check.append(name)
 
         if not silent and force:
@@ -1113,14 +1852,125 @@ class TibiaToolsApp(MDApp):
             ).start()
 
     def _get_cached_fav_status(self, name: str) -> Optional[str]:
-        key = f"fav_status:{(name or '').strip().lower()}"
-        cached = self._cache_get(key, ttl_seconds=25)
-        if isinstance(cached, dict):
-            return cached.get("state")
+        key_clean = (name or "").strip().lower()
+        if not key_clean:
+            return None
+
+        # 1) cache em memória (não expira enquanto o app está aberto)
+        try:
+            if key_clean in getattr(self, "_fav_status_cache", {}):
+                return self._fav_status_cache.get(key_clean)
+        except Exception:
+            pass
+
+        # 2) cache persistente (TTL moderado)
+        cached = self._cache_get(f"fav_status:{key_clean}", ttl_seconds=120)  # 2 min
         if isinstance(cached, str):
             return cached
         return None
 
+    def _fav_status_needs_refresh(self, name: str, ttl_seconds: int = 45) -> bool:
+        """Decide se vale atualizar o status novamente.
+
+        Usamos o timestamp do cache persistente (self.cache), não o cache em memória.
+        """
+        try:
+            key_clean = (name or "").strip().lower()
+            if not key_clean:
+                return True
+            item = self.cache.get(f"fav_status:{key_clean}")
+            if not isinstance(item, dict):
+                return True
+            ts = item.get("ts")
+            if not ts:
+                return True
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(ts)
+            except Exception:
+                return True
+            age = (datetime.utcnow() - dt).total_seconds()
+            return age > ttl_seconds
+        except Exception:
+            return True
+
+    def _get_cached_fav_world(self, name: str) -> Optional[str]:
+        key_clean = (name or "").strip().lower()
+        if not key_clean:
+            return None
+
+        try:
+            if key_clean in getattr(self, "_fav_world_cache", {}):
+                w = self._fav_world_cache.get(key_clean)
+                return str(w).strip() if w else None
+        except Exception:
+            pass
+
+        cached = self._cache_get(f"fav_world:{key_clean}", ttl_seconds=30 * 24 * 3600)  # 30 dias
+        if isinstance(cached, str) and cached.strip():
+            try:
+                self._fav_world_cache[key_clean] = cached.strip()
+            except Exception:
+                pass
+            return cached.strip()
+        return None
+
+    def _set_cached_fav_world(self, name: str, world: str) -> None:
+        key_clean = (name or "").strip().lower()
+        w = (world or "").strip()
+        if not key_clean or not w:
+            return
+        try:
+            self._fav_world_cache[key_clean] = w
+        except Exception:
+            pass
+        try:
+            self._cache_set(f"fav_world:{key_clean}", w)
+        except Exception:
+            pass
+
+    def _fetch_character_world(self, name: str) -> Optional[str]:
+        """Busca o world do char via TibiaData e cacheia."""
+        try:
+            data = fetch_character_tibiadata(name, timeout=12)
+            cw = data.get("character", {}) if isinstance(data, dict) else {}
+            ch = cw.get("character", cw) if isinstance(cw, dict) else {}
+            world = str((ch or {}).get("world") or "").strip()
+            if world and world.upper() != "N/A":
+                self._set_cached_fav_world(name, world)
+                return world
+        except Exception:
+            pass
+        return None
+
+    def _fetch_world_online_players(self, world: str, timeout: int = 12) -> Optional[set]:
+        """Retorna um set (lowercase) com os nomes online no world (TibiaData /v4/world/{world})."""
+        try:
+            safe_world = urllib.parse.quote(str(world).strip())
+            url = f"https://api.tibiadata.com/v4/world/{safe_world}"
+            r = requests.get(url, timeout=timeout, headers={"User-Agent": "TibiaToolsApp"})
+            r.raise_for_status()
+            data = r.json() if r.text else {}
+            wb = (data or {}).get("world", {}) if isinstance(data, dict) else {}
+            players = None
+            if isinstance(wb, dict):
+                players = wb.get("online_players") or wb.get("players_online") or wb.get("players")
+                if isinstance(players, dict):
+                    players = players.get("online_players") or players.get("players") or players.get("data")
+            if not isinstance(players, list):
+                return set()
+            out = set()
+            for p in players:
+                pname = None
+                if isinstance(p, dict):
+                    pname = p.get("name") or p.get("player_name")
+                else:
+                    pname = p
+                if isinstance(pname, str) and pname.strip():
+                    out.add(pname.strip().lower())
+            return out
+        except Exception:
+            return None
     def _fav_status_presentation(self, state) -> tuple[str, tuple]:
         s = str(state).strip().lower() if state is not None else ""
         if s == "online" or state is True:
@@ -1227,74 +2077,82 @@ class TibiaToolsApp(MDApp):
                     pass
         except Exception as e:
             print(f"[FAV] Erro ao remover favorito: {e}")
+
     def _refresh_fav_statuses_worker(self, names: List[str], job_id: int):
-        """Worker de atualização de status dos favoritos.
+        """Atualiza o status dos favoritos em background, minimizando chamadas e falsos OFF.
 
-        Faz as chamadas de rede em background e atualiza a UI via Clock.
+        Em vez de checar 1 a 1 (muito request e pode dar falso OFF),
+        agrupamos por world e consultamos o /v4/world/{world} (lista de online players).
         """
         try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-        except Exception:
-            ThreadPoolExecutor = None
-            as_completed = None
+            # 1) resolve world de cada char (cache -> TibiaData /v4/character)
+            name_to_world = {}
+            unknown = []
 
-        try:
-            if ThreadPoolExecutor and as_completed:
-                max_workers = min(3, max(1, len(names)))
-                with ThreadPoolExecutor(max_workers=max_workers) as ex:
-                    fut_map = {ex.submit(self._fetch_character_online_state, n): n for n in names}
-                    for fut in as_completed(fut_map):
-                        n = fut_map[fut]
-                        try:
-                            status = fut.result()
-                        except Exception:
-                            status = None
-                        if status is None:
-                            continue
-                        Clock.schedule_once(lambda dt, nn=n, st=status: self._set_fav_item_status(nn, st), 0)
-            else:
-                # Fallback sequencial
-                for n in names:
-                    status = self._fetch_character_online_state(n)
-                    if status is None:
-                        continue
-                    Clock.schedule_once(lambda dt, nn=n, st=status: self._set_fav_item_status(nn, st), 0)
+            for n in names:
+                if job_id != self._fav_status_job_id:
+                    return
+                w = self._get_cached_fav_world(n)
+                if not w:
+                    w = self._fetch_character_world(n)
+                if w:
+                    name_to_world[n] = w
+                else:
+                    unknown.append(n)
+
+            # 2) agrupa por world
+            by_world = {}
+            for n, w in name_to_world.items():
+                by_world.setdefault(w, []).append(n)
+
+            # 3) para cada world, pega o set de online players 1x
+            for w, ns in by_world.items():
+                if job_id != self._fav_status_job_id:
+                    return
+                online_set = self._fetch_world_online_players(w, timeout=12)
+                if online_set is None:
+                    online_set = set()
+
+                for n in ns:
+                    if job_id != self._fav_status_job_id:
+                        return
+                    is_on = (n or "").strip().lower() in online_set
+                    st = "online" if is_on else "offline"
+                    Clock.schedule_once(lambda dt, nn=n, stt=st: self._set_fav_item_status(nn, stt), 0)
+
+            # 4) fallback (se não conseguimos world): tenta método antigo (tibia.com / endpoint do char)
+            for n in unknown:
+                if job_id != self._fav_status_job_id:
+                    return
+                st = self._fetch_character_online_state(n)
+                if st is None:
+                    # mantém último estado se existir, senão offline
+                    k = (n or "").strip().lower()
+                    st = getattr(self, "_fav_status_cache", {}).get(k) or "offline"
+                Clock.schedule_once(lambda dt, nn=n, stt=st: self._set_fav_item_status(nn, stt), 0)
         finally:
-            def _finish(_dt):
-                self._fav_refreshing = False
-            Clock.schedule_once(_finish, 0)
-    def _fetch_character_online_state(self, name: str) -> str:
-        """Retorna o estado online do personagem.
+            Clock.schedule_once(lambda _dt: setattr(self, "_fav_refreshing", False), 0)
 
-        Nota: o TibiaData pode atrasar (principalmente OFF->ON). Para evitar falso OFF:
-          1) TibiaData como fast path (se retornar ON, já serve).
-          2) Confirmação via tibia.com quando TibiaData não diz ON.
-          3) Se tibia.com falhar, voltamos para o valor do TibiaData (se existir).
+    def _fetch_character_online_state(self, name: str) -> Optional[str]:
+        """Fallback (1 a 1) para descobrir online/offline.
+
+        Usado apenas quando não conseguimos resolver o world para usar o /v4/world/{world}.
         """
-        # 1) Fast path via TibiaData (geralmente rápido)
-        td = None
         try:
-            td = is_character_online_tibiadata(name, timeout=2.8)
-        except Exception:
-            td = None
-
-        if td is True:
-            return "online"
-
-        # 2) Confirmação/autoridade via tibia.com (evita falso OFF)
-        try:
-            tc = is_character_online_tibia_com(name, world="", timeout=6)
+            tc = is_character_online_tibia_com(name, world="", timeout=12)
             if tc is not None:
                 return "online" if tc else "offline"
         except Exception:
-            tc = None
+            pass
 
-        # 3) Fallback para TibiaData (se tivermos algo)
-        if td is not None:
-            return "online" if td else "offline"
+        try:
+            td = is_character_online_tibiadata(name, world=None, timeout=12)
+            if td is not None:
+                return "online" if td else "offline"
+        except Exception:
+            pass
 
         return None
-
 
     def _fav_actions(self, name: str, caller=None):
         """Menu de ações para um favorito.
