@@ -752,7 +752,7 @@ class TibiaToolsApp(MDApp):
             return
         try:
             st = fav_state.load_state(self.data_dir)
-            if bool(st.get("monitoring", False)):
+            if bool(st.get("monitoring", True)):
                 self._start_fav_monitor_service()
         except Exception:
             pass
@@ -1085,7 +1085,7 @@ class TibiaToolsApp(MDApp):
         # Background monitor (shared state file)
         try:
             st = fav_state.load_state(self.data_dir)
-            scr.ids.set_bg_monitor.active = bool(st.get("monitoring", False))
+            scr.ids.set_bg_monitor.active = bool(st.get("monitoring", True))
             scr.ids.set_bg_notify_online.active = bool(st.get("notify_fav_online", True))
             scr.ids.set_bg_notify_level.active = bool(st.get("notify_fav_level", True))
             scr.ids.set_bg_notify_death.active = bool(st.get("notify_fav_death", True))
