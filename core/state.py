@@ -13,7 +13,7 @@ def _default_state() -> Dict[str, Any]:
         "favorites": [],
         # background monitor
         "interval_seconds": 60,
-        "monitoring": False,
+        "monitoring": True,
         "notify_fav_online": True,
         "notify_fav_death": True,
         "notify_fav_level": True,
