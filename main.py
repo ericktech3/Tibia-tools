@@ -29,6 +29,7 @@ from kivy.metrics import dp
 from kivy.properties import StringProperty
 from kivy.uix.screenmanager import ScreenManager
 from kivy.utils import platform
+from kivy.uix.behaviors import ButtonBehavior
 
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
@@ -40,6 +41,8 @@ from kivymd.uix.list import (
     IconLeftWidget,
 )
 from kivymd.uix.menu import MDDropdownMenu
+from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.behaviors import RectangularRippleBehavior
 
 # ---- IMPORTS DO CORE (com proteção para não “fechar sozinho” no Android) ----
 _CORE_IMPORT_ERROR = None
@@ -73,6 +76,13 @@ class RootSM(ScreenManager):
 
 class MoreItem(OneLineIconListItem):
     icon = StringProperty("chevron-right")
+
+
+
+
+class ClickableRow(RectangularRippleBehavior, ButtonBehavior, MDBoxLayout):
+    """Linha clicável usada no Dashboard/Home."""
+    pass
 
 
 class TibiaToolsApp(MDApp):
@@ -312,6 +322,23 @@ class TibiaToolsApp(MDApp):
 
     def back_home(self, *_):
         self.go("home")
+
+
+    def open_boosted_from_home(self, which: str = ""):
+        """Abre a tela Boosted a partir do card da Home.
+
+        which: "creature" | "boss" | "" (opcional, apenas para futuras melhorias).
+        """
+        try:
+            self.root.current = "boosted"
+        except Exception:
+            return
+
+        # garante que os dados estejam atualizados ao entrar
+        try:
+            self.update_boosted(silent=False)
+        except Exception:
+            pass
 
 
     def select_home_tab(self, tab_name: str):
