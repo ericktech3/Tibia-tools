@@ -1,5 +1,36 @@
 #:import dp kivy.metrics.dp
 
+# ---------- UI defaults (polish) ----------
+<MDCard>:
+    radius: [dp(16), dp(16), dp(16), dp(16)]
+    elevation: 1
+
+<MDRaisedButton>:
+    size_hint_y: None
+    height: dp(44)
+
+<AppCard@MDCard>:
+    padding: dp(14)
+    radius: [dp(18), dp(18), dp(18), dp(18)]
+    elevation: 1
+
+<SectionTitle@MDLabel>:
+    font_style: "Subtitle1"
+    bold: True
+    size_hint_y: None
+    height: self.texture_size[1] + dp(8)
+
+<HintText@MDLabel>:
+    theme_text_color: "Hint"
+    font_style: "Caption"
+    size_hint_y: None
+    height: self.texture_size[1] + dp(6)
+
+<ActionRow@MDBoxLayout>:
+    size_hint_y: None
+    height: dp(44)
+    spacing: dp(10)
+
 <MoreItem>:
     icon: "chevron-right"
     IconLeftWidget:
@@ -246,17 +277,20 @@ RootSM:
                                 icon: "close"
                                 on_release: app.clear_char_search()
 
-                        MDRaisedButton:
-                            text: "Buscar"
-                            on_release: app.search_character()
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Buscar"
+                                on_release: app.search_character()
 
-                        MDRaisedButton:
-                            text: "Abrir no Tibia.com"
-                            on_release: app.open_last_in_browser()
+                            MDRectangleFlatIconButton:
+                                icon: "open-in-new"
+                                text: "Tibia.com"
+                                on_release: app.open_last_in_browser()
 
-                        MDRaisedButton:
-                            text: "Favoritar"
-                            on_release: app.add_current_to_favorites()
+                            MDRectangleFlatIconButton:
+                                icon: "star-plus-outline"
+                                text: "Favoritar"
+                                on_release: app.add_current_to_favorites()
 
                         MDCard:
                             id: char_result_card
@@ -401,118 +435,168 @@ RootSM:
                     MDBoxLayout:
                         orientation: "vertical"
                         padding: dp(12)
-                        spacing: dp(10)
+                        spacing: dp(12)
                         size_hint_y: None
                         height: self.minimum_height
                         adaptive_height: True
 
-                        MDLabel:
-                            text: "Calculadora de Shared XP"
-                            bold: True
+                        AppCard:
                             size_hint_y: None
-                            height: self.texture_size[1] + dp(6)
+                            height: self.minimum_height
 
-                        MDTextField:
-                            id: share_level
-                            hint_text: "Seu level"
-                            mode: "rectangle"
-                            input_filter: "int"
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(10)
+                                size_hint_y: None
+                                height: self.minimum_height
 
-                        MDRaisedButton:
-                            text: "Calcular"
-                            on_release: app.calc_shared_xp()
+                                SectionTitle:
+                                    text: "Calculadora de Shared XP"
 
-                        MDLabel:
-                            id: share_result
-                            text: ""
-                            halign: "left"
-                            valign: "top"
-                            text_size: self.width, None
-                            size_hint_y: None
-                            height: self.texture_size[1] + dp(20)
+                                HintText:
+                                    text: "Informe seu level e veja a faixa permitida para shared."
+
+                                MDTextField:
+                                    id: share_level
+                                    hint_text: "Seu level"
+                                    mode: "rectangle"
+                                    input_filter: "int"
+
+                                ActionRow:
+                                    MDRaisedButton:
+                                        text: "Calcular"
+                                        on_release: app.calc_shared_xp()
+
+                                MDLabel:
+                                    id: share_result
+                                    text: ""
+                                    halign: "left"
+                                    valign: "top"
+                                    text_size: self.width, None
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(20)
+
 
             MDBottomNavigationItem:
                 name: "tab_fav"
                 text: "Favoritos"
                 icon: "star"
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    padding: dp(8)
-                    spacing: dp(8)
+                MDScrollView:
+                    do_scroll_x: False
 
                     MDBoxLayout:
-                        orientation: "horizontal"
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
                         size_hint_y: None
-                        height: dp(44)
-                        spacing: dp(8)
+                        height: self.minimum_height
+                        adaptive_height: True
 
-                        MDLabel:
-                            text: "[b]Favoritos[/b]"
-                            markup: True
-                            valign: "middle"
+                        AppCard:
+                            size_hint_y: None
+                            height: self.minimum_height
 
-                        MDIconButton:
-                            icon: "refresh"
-                            on_release: app.refresh_favorites_list(force=True)
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(10)
+                                size_hint_y: None
+                                height: self.minimum_height
 
-                    MDLabel:
-                        text: "Toque em um favorito para opções."
-                        size_hint_y: None
-                        height: dp(24)
+                                MDBoxLayout:
+                                    size_hint_y: None
+                                    height: dp(36)
 
-                    ScrollView:
-                        MDList:
-                            id: fav_list
+                                    SectionTitle:
+                                        text: "Favoritos"
 
+                                    MDIconButton:
+                                        icon: "refresh"
+                                        on_release: app.refresh_favorites_list(force=True)
+
+                                HintText:
+                                    text: "Toque em um favorito para opções."
+
+                                MDSeparator:
+                                    height: dp(1)
+
+                                MDList:
+                                    id: fav_list
+                                    size_hint_y: None
+                                    height: self.minimum_height
             MDBottomNavigationItem:
                 name: "tab_more"
                 text: "Mais"
                 icon: "dots-horizontal"
 
-                ScrollView:
-                    MDList:
-                        MoreItem:
-                            text: "Bosses (ExevoPan)"
-                            icon: "skull"
-                            on_release: app.open_more_target("bosses")
-                        MoreItem:
-                            text: "Boosted"
-                            icon: "star-four-points"
-                            on_release: app.open_more_target("boosted")
-                        MoreItem:
-                            text: "Treino (Exercise)"
-                            icon: "dumbbell"
-                            on_release: app.open_more_target("training")
-                        MoreItem:
-                            text: "Imbuements"
-                            icon: "flash"
-                            on_release: app.open_more_target("imbuements")
-                        MoreItem:
-                            text: "Stamina"
-                            icon: "timer-outline"
-                            on_release: app.open_more_target("stamina")
-                        MoreItem:
-                            text: "Hunt Analyzer"
-                            icon: "chart-bar"
-                            on_release: app.open_more_target("hunt")
-                        MoreItem:
-                            text: "Novidades"
-                            icon: "new-box"
-                            on_release: app.open_more_target("changelog")
-                        MoreItem:
-                            text: "Sobre"
-                            icon: "information-outline"
-                            on_release: app.open_more_target("about")
-                        MoreItem:
-                            text: "Feedback"
-                            icon: "message-text"
-                            on_release: app.open_more_target("feedback")
-                        MoreItem:
-                            text: "Configurações"
-                            icon: "cog"
-                            on_release: app.open_more_target("settings")
+                MDScrollView:
+                    do_scroll_x: False
 
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
+                        size_hint_y: None
+                        height: self.minimum_height
+                        adaptive_height: True
+
+                        AppCard:
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(6)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                SectionTitle:
+                                    text: "Ferramentas"
+
+                                MDSeparator:
+                                    height: dp(1)
+
+                                MDList:
+                                    MoreItem:
+                                        text: "Bosses (ExevoPan)"
+                                        icon: "skull"
+                                        on_release: app.open_more_target("bosses")
+                                    MoreItem:
+                                        text: "Boosted"
+                                        icon: "star-four-points"
+                                        on_release: app.open_more_target("boosted")
+                                    MoreItem:
+                                        text: "Treino (Exercise)"
+                                        icon: "dumbbell"
+                                        on_release: app.open_more_target("training")
+                                    MoreItem:
+                                        text: "Imbuements"
+                                        icon: "flash"
+                                        on_release: app.open_more_target("imbuements")
+                                    MoreItem:
+                                        text: "Stamina"
+                                        icon: "timer-outline"
+                                        on_release: app.open_more_target("stamina")
+                                    MoreItem:
+                                        text: "Hunt Analyzer"
+                                        icon: "chart-bar"
+                                        on_release: app.open_more_target("hunt")
+                                    MoreItem:
+                                        text: "Novidades"
+                                        icon: "new-box"
+                                        on_release: app.open_more_target("changelog")
+                                    MoreItem:
+                                        text: "Sobre"
+                                        icon: "information-outline"
+                                        on_release: app.open_more_target("about")
+                                    MoreItem:
+                                        text: "Feedback"
+                                        icon: "message-text"
+                                        on_release: app.open_more_target("feedback")
+                                    MoreItem:
+                                        text: "Configurações"
+                                        icon: "cog"
+                                        on_release: app.open_more_target("settings")
 
 <BossesScreen@MDScreen>:
     MDBoxLayout:
@@ -523,89 +607,135 @@ RootSM:
             left_action_items: [["arrow-left", lambda x: app.back_home()]]
             elevation: 2
 
-        MDBoxLayout:
-            orientation: "vertical"
-            padding: dp(12)
-            spacing: dp(10)
+        MDScrollView:
+            do_scroll_x: False
 
             MDBoxLayout:
-                size_hint_y: None
-                height: dp(56)
-                spacing: dp(8)
-
-                MDTextField:
-                    id: world_field
-                    hint_text: "World"
-                    mode: "rectangle"
-
-                MDIconButton:
-                    id: world_drop
-                    icon: "menu-down"
-                    on_release:
-                        if app._menu_world: app._menu_world.open()
-
-            MDRaisedButton:
-                text: "Buscar Bosses"
-                on_release: app.bosses_fetch()
-
-            MDLabel:
-                id: boss_status
-                text: ""
-                size_hint_y: None
-                height: self.texture_size[1] + dp(10)
-
-
-            MDBoxLayout:
-                size_hint_y: None
-                height: dp(56)
-                spacing: dp(8)
-
-                MDTextField:
-                    id: boss_search
-                    hint_text: "Buscar boss..."
-                    mode: "rectangle"
-                    on_text: app.bosses_apply_filters_debounced()
-
-                MDIconButton:
-                    id: boss_filter_btn
-                    icon: "filter-variant"
-                    on_release: app.open_boss_filter_menu()
-
-                MDIconButton:
-                    id: boss_sort_btn
-                    icon: "sort"
-                    on_release: app.open_boss_sort_menu()
-
-                MDIconButton:
-                    id: boss_fav_toggle
-                    icon: "star-outline"
-                    on_release: app.bosses_toggle_fav_only()
-
-                MDIconButton:
-                    icon: "star-box-multiple-outline"
-                    on_release: app.open_boss_favorites()
-
-            MDBoxLayout:
-                size_hint_y: None
-                height: dp(22)
+                orientation: "vertical"
+                padding: dp(12)
                 spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
 
-                MDLabel:
-                    id: boss_filter_label
-                    text: "All"
-                    theme_text_color: "Hint"
-                    size_hint_x: .5
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
 
-                MDLabel:
-                    id: boss_sort_label
-                    text: "Chance"
-                    theme_text_color: "Hint"
-                    halign: "right"
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
-            ScrollView:
-                MDList:
-                    id: boss_list
+                        SectionTitle:
+                            text: "World"
 
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: world_field
+                                hint_text: "World"
+                                mode: "rectangle"
+
+                            MDIconButton:
+                                id: world_drop
+                                icon: "menu-down"
+                                on_release:
+                                    if app._menu_world: app._menu_world.open()
+
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Buscar"
+                                on_release: app.bosses_fetch()
+
+                            MDRectangleFlatIconButton:
+                                icon: "star-box-multiple-outline"
+                                text: "Favoritos"
+                                on_release: app.open_boss_favorites()
+
+                        HintText:
+                            id: boss_status
+                            text: ""
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Filtros"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: boss_search
+                                hint_text: "Buscar boss..."
+                                mode: "rectangle"
+                                on_text: app.bosses_apply_filters_debounced()
+
+                            MDIconButton:
+                                id: boss_filter_btn
+                                icon: "filter-variant"
+                                on_release: app.open_boss_filter_menu()
+
+                            MDIconButton:
+                                id: boss_sort_btn
+                                icon: "sort"
+                                on_release: app.open_boss_sort_menu()
+
+                            MDIconButton:
+                                id: boss_fav_toggle
+                                icon: "star-outline"
+                                on_release: app.bosses_toggle_fav_only()
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(22)
+                            spacing: dp(12)
+
+                            MDLabel:
+                                id: boss_filter_label
+                                text: "All"
+                                theme_text_color: "Hint"
+                                size_hint_x: .5
+
+                            MDLabel:
+                                id: boss_sort_label
+                                text: "Chance"
+                                theme_text_color: "Hint"
+                                halign: "right"
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Lista"
+
+                        MDSeparator:
+                            height: dp(1)
+
+                        MDList:
+                            id: boss_list
+                            size_hint_y: None
+                            height: self.minimum_height
 
 <BoostedScreen@MDScreen>:
     MDBoxLayout:
@@ -617,111 +747,130 @@ RootSM:
             right_action_items: [["refresh", lambda x: app.update_boosted()]]
             elevation: 2
 
-        MDBoxLayout:
-            orientation: "vertical"
-            padding: dp(12)
-            spacing: dp(12)
-
-            MDLabel:
-                id: boost_status
-                text: ""
-                size_hint_y: None
-                height: dp(24)
+        MDScrollView:
+            do_scroll_x: False
 
             MDBoxLayout:
-                orientation: "horizontal"
+                orientation: "vertical"
+                padding: dp(12)
                 spacing: dp(12)
                 size_hint_y: None
-                height: dp(130)
+                height: self.minimum_height
 
-                MDCard:
-                    padding: dp(10)
-                    size_hint_x: 0.5
+                HintText:
+                    id: boost_status
+                    text: ""
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: dp(12)
+                    size_hint_y: None
+                    height: dp(138)
+
+                    AppCard:
+                        size_hint_x: 0.5
+                        size_hint_y: None
+                        height: dp(138)
+
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: dp(10)
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            SectionTitle:
+                                text: "Criatura Boosted"
+
+                            MDBoxLayout:
+                                orientation: "horizontal"
+                                spacing: dp(10)
+                                size_hint_y: None
+                                height: dp(64)
+
+                                AnchorLayout:
+                                    size_hint: None, None
+                                    size: dp(64), dp(64)
+                                    anchor_x: "center"
+                                    anchor_y: "center"
+
+                                    AsyncImage:
+                                        id: boost_creature_sprite
+                                        source: ""
+                                        size_hint: None, None
+                                        size: dp(56), dp(56)
+                                        allow_stretch: True
+                                        keep_ratio: True
+                                        opacity: 1 if self.source else 0
+
+                                MDLabel:
+                                    id: boost_creature
+                                    text: "-"
+                                    valign: "middle"
+                                    halign: "left"
+                                    text_size: self.size
+
+                    AppCard:
+                        size_hint_x: 0.5
+                        size_hint_y: None
+                        height: dp(138)
+
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: dp(10)
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            SectionTitle:
+                                text: "Boss Boosted"
+
+                            MDBoxLayout:
+                                orientation: "horizontal"
+                                spacing: dp(10)
+                                size_hint_y: None
+                                height: dp(64)
+
+                                AnchorLayout:
+                                    size_hint: None, None
+                                    size: dp(64), dp(64)
+                                    anchor_x: "center"
+                                    anchor_y: "center"
+
+                                    AsyncImage:
+                                        id: boost_boss_sprite
+                                        source: ""
+                                        size_hint: None, None
+                                        size: dp(56), dp(56)
+                                        allow_stretch: True
+                                        keep_ratio: True
+                                        opacity: 1 if self.source else 0
+
+                                MDLabel:
+                                    id: boost_boss
+                                    text: "-"
+                                    valign: "middle"
+                                    halign: "left"
+                                    text_size: self.size
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
                     MDBoxLayout:
                         orientation: "vertical"
                         spacing: dp(8)
-                        MDLabel:
-                            text: "Boosted Creature"
-                            bold: True
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Histórico (7 dias)"
+
+                        MDSeparator:
+                            height: dp(1)
+
+                        MDList:
+                            id: boost_hist_list
                             size_hint_y: None
-                            height: dp(20)
-                        MDBoxLayout:
-                            orientation: "horizontal"
-                            spacing: dp(10)
-                            size_hint_y: None
-                            height: dp(56)
-                            AnchorLayout:
-                                size_hint: None, None
-                                size: dp(56), dp(56)
-                                anchor_x: "center"
-                                anchor_y: "center"
-                                AsyncImage:
-                                    id: boost_creature_sprite
-                                    source: ""
-                                    size_hint: None, None
-                                    size: dp(48), dp(48)
-                                    allow_stretch: True
-                                    keep_ratio: True
-                                    opacity: 1 if self.source else 0
-                            MDLabel:
-                                id: boost_creature
-                                text: "-"
-                                valign: "middle"
-                                halign: "left"
-                                text_size: self.size
-
-                MDCard:
-                    padding: dp(10)
-                    size_hint_x: 0.5
-                    MDBoxLayout:
-                        orientation: "vertical"
-                        spacing: dp(8)
-                        MDLabel:
-                            text: "Boosted Boss"
-                            bold: True
-                            size_hint_y: None
-                            height: dp(20)
-                        MDBoxLayout:
-                            orientation: "horizontal"
-                            spacing: dp(10)
-                            size_hint_y: None
-                            height: dp(56)
-                            AnchorLayout:
-                                size_hint: None, None
-                                size: dp(56), dp(56)
-                                anchor_x: "center"
-                                anchor_y: "center"
-                                AsyncImage:
-                                    id: boost_boss_sprite
-                                    source: ""
-                                    size_hint: None, None
-                                    size: dp(48), dp(48)
-                                    allow_stretch: True
-                                    keep_ratio: True
-                                    opacity: 1 if self.source else 0
-                            MDLabel:
-                                id: boost_boss
-                                text: "-"
-                                valign: "middle"
-                                halign: "left"
-                                text_size: self.size
-
-            MDSeparator:
-                height: dp(1)
-
-            MDLabel:
-                text: "Histórico (7 dias)"
-                bold: True
-                size_hint_y: None
-                height: dp(24)
-
-            ScrollView:
-                do_scroll_x: False
-                size_hint_y: 1
-
-                MDList:
-                    id: boost_hist_list
-
+                            height: self.minimum_height
 
 <TrainingScreen@MDScreen>:
     MDBoxLayout:
@@ -732,146 +881,198 @@ RootSM:
             left_action_items: [["arrow-left", lambda x: app.back_home()]]
             elevation: 2
 
-        ScrollView:
+        MDScrollView:
+            do_scroll_x: False
+
             MDBoxLayout:
                 orientation: "vertical"
                 padding: dp(12)
-                spacing: dp(10)
+                spacing: dp(12)
                 size_hint_y: None
                 height: self.minimum_height
 
-                # Skill
-                MDBoxLayout:
+                AppCard:
                     size_hint_y: None
-                    height: dp(56)
-                    spacing: dp(8)
+                    height: self.minimum_height
 
-                    MDTextField:
-                        id: skill_field
-                        hint_text: "Skill"
-                        text: "Sword"
-                        mode: "rectangle"
-                        readonly: True
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
-                    MDIconButton:
-                        id: skill_drop
-                        icon: "menu-down"
-                        on_release:
-                            app._ensure_training_menus()
-                            if app._menu_skill: app._menu_skill.open()
+                        SectionTitle:
+                            text: "Configuração"
 
-                # Vocação
-                MDBoxLayout:
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: skill_field
+                                hint_text: "Skill"
+                                text: "Sword"
+                                mode: "rectangle"
+                                readonly: True
+
+                            MDIconButton:
+                                id: skill_drop
+                                icon: "menu-down"
+                                on_release:
+                                    app._ensure_training_menus()
+                                    if app._menu_skill: app._menu_skill.open()
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: voc_field
+                                hint_text: "Vocação"
+                                text: "Knight"
+                                mode: "rectangle"
+                                readonly: True
+
+                            MDIconButton:
+                                id: voc_drop
+                                icon: "menu-down"
+                                on_release:
+                                    app._ensure_training_menus()
+                                    if app._menu_vocation: app._menu_vocation.open()
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: weapon_field
+                                hint_text: "Arma de treino"
+                                text: "Enhanced (1800)"
+                                mode: "rectangle"
+                                readonly: True
+
+                            MDIconButton:
+                                id: weapon_drop
+                                icon: "menu-down"
+                                on_release:
+                                    app._ensure_training_menus()
+                                    if app._menu_weapon: app._menu_weapon.open()
+
+                AppCard:
                     size_hint_y: None
-                    height: dp(56)
-                    spacing: dp(8)
+                    height: self.minimum_height
 
-                    MDTextField:
-                        id: voc_field
-                        hint_text: "Vocação"
-                        text: "Knight"
-                        mode: "rectangle"
-                        readonly: True
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
-                    MDIconButton:
-                        id: voc_drop
-                        icon: "menu-down"
-                        on_release:
-                            app._ensure_training_menus()
-                            if app._menu_vocation: app._menu_vocation.open()
+                        SectionTitle:
+                            text: "Níveis"
 
-                # Arma de treino (cargas)
-                MDBoxLayout:
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: from_level
+                                hint_text: "De"
+                                mode: "rectangle"
+                                input_filter: "int"
+
+                            MDTextField:
+                                id: percent_left
+                                hint_text: "% restante (1-100)"
+                                mode: "rectangle"
+                                input_filter: "float"
+                                text: "100"
+
+                            MDTextField:
+                                id: to_level
+                                hint_text: "Até"
+                                mode: "rectangle"
+                                input_filter: "int"
+
+                        MDTextField:
+                            id: loyalty
+                            hint_text: "Loyalty (%) (0-50)"
+                            mode: "rectangle"
+                            input_filter: "float"
+                            text: "0"
+
+                AppCard:
                     size_hint_y: None
-                    height: dp(56)
-                    spacing: dp(8)
+                    height: self.minimum_height
 
-                    MDTextField:
-                        id: weapon_field
-                        hint_text: "Arma de treino"
-                        text: "Enhanced (1800)"
-                        mode: "rectangle"
-                        readonly: True
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
-                    MDIconButton:
-                        id: weapon_drop
-                        icon: "menu-down"
-                        on_release:
-                            app._ensure_training_menus()
-                            if app._menu_weapon: app._menu_weapon.open()
+                        SectionTitle:
+                            text: "Bônus"
 
-                # Níveis + % restante
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(56)
-                    spacing: dp(8)
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
 
-                    MDTextField:
-                        id: from_level
-                        hint_text: "De"
-                        mode: "rectangle"
-                        input_filter: "int"
+                            MDLabel:
+                                text: "Private dummy (+10%)"
+                                valign: "middle"
 
-                    MDTextField:
-                        id: percent_left
-                        hint_text: "% restante (1-100)"
-                        mode: "rectangle"
-                        input_filter: "float"
-                        text: "100"
+                            MDSwitch:
+                                id: private_dummy
+                                active: False
 
-                    MDTextField:
-                        id: to_level
-                        hint_text: "Até"
-                        mode: "rectangle"
-                        input_filter: "int"
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
 
-                MDTextField:
-                    id: loyalty
-                    hint_text: "Loyalty (%) (0-50)"
-                    mode: "rectangle"
-                    input_filter: "float"
-                    text: "0"
+                            MDLabel:
+                                text: "Double event (x2)"
+                                valign: "middle"
 
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
-                    MDLabel:
-                        text: "Private dummy (+10%):"
-                        valign: "middle"
-                    MDSwitch:
-                        id: private_dummy
-                        active: False
+                            MDSwitch:
+                                id: double_event
+                                active: False
 
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
-                    MDLabel:
-                        text: "Double event (x2):"
-                        valign: "middle"
-                    MDSwitch:
-                        id: double_event
-                        active: False
+                ActionRow:
+                    MDRaisedButton:
+                        text: "Calcular"
+                        on_release: app.training_calculate()
 
-                MDRaisedButton:
-                    text: "Calcular"
-                    on_release: app.training_calculate()
-
-                MDLabel:
+                HintText:
                     id: train_status
                     text: ""
-                    size_hint_y: None
-                    height: dp(24)
 
-                MDLabel:
-                    id: train_result
-                    text: ""
-                    halign: "left"
-                    valign: "top"
+                AppCard:
                     size_hint_y: None
-                    height: self.texture_size[1] + dp(20)
+                    height: self.minimum_height
 
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Resultado"
+
+                        MDLabel:
+                            id: train_result
+                            text: ""
+                            halign: "left"
+                            valign: "top"
+                            size_hint_y: None
+                            height: self.texture_size[1] + dp(20)
 
 <ImbuementsScreen@MDScreen>:
     MDBoxLayout:
@@ -883,54 +1084,85 @@ RootSM:
             right_action_items: [["refresh", lambda x: app._imbuements_load()]]
             elevation: 2
 
-        MDBoxLayout:
-            orientation: "vertical"
-            padding: dp(12)
-            spacing: dp(10)
-
+        MDScrollView:
+            do_scroll_x: False
 
             MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
                 size_hint_y: None
-                height: dp(44)
-                spacing: dp(8)
+                height: self.minimum_height
 
-                MDIconButton:
-                    id: imb_tier_btn
-                    icon: "tag-outline"
-                    on_release: app.open_imb_tier_menu()
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
 
-                MDLabel:
-                    id: imb_tier_label
-                    text: "All"
-                    theme_text_color: "Hint"
-                    size_hint_x: None
-                    width: dp(60)
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
-                MDIconButton:
-                    id: imb_fav_toggle
-                    icon: "star-outline"
-                    on_release: app.imbuements_toggle_fav_only()
+                        SectionTitle:
+                            text: "Filtros"
 
-                MDIconButton:
-                    icon: "content-copy"
-                    on_release: app.imbuements_copy_selected_hint()
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(44)
+                            spacing: dp(8)
 
-            MDTextField:
-                id: imb_search
-                hint_text: "Buscar (ex: Vampirism, Strike...)"
-                mode: "rectangle"
-                on_text: app.imbuements_refresh_list()
+                            MDIconButton:
+                                id: imb_tier_btn
+                                icon: "tag-outline"
+                                on_release: app.open_imb_tier_menu()
 
-            MDLabel:
-                id: imb_status
-                text: "Toque em refresh para carregar."
-                size_hint_y: None
-                height: dp(24)
+                            MDLabel:
+                                id: imb_tier_label
+                                text: "All"
+                                theme_text_color: "Hint"
+                                size_hint_x: None
+                                width: dp(60)
 
-            ScrollView:
-                MDList:
-                    id: imb_list
+                            MDIconButton:
+                                id: imb_fav_toggle
+                                icon: "star-outline"
+                                on_release: app.imbuements_toggle_fav_only()
 
+                            MDIconButton:
+                                icon: "content-copy"
+                                on_release: app.imbuements_copy_selected_hint()
+
+                        MDTextField:
+                            id: imb_search
+                            hint_text: "Buscar (ex: Vampirism, Strike...)"
+                            mode: "rectangle"
+                            on_text: app.imbuements_refresh_list()
+
+                        HintText:
+                            id: imb_status
+                            text: "Toque em refresh para carregar."
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Lista"
+
+                        MDSeparator:
+                            height: dp(1)
+
+                        MDList:
+                            id: imb_list
+                            size_hint_y: None
+                            height: self.minimum_height
 
 <HuntScreen@MDScreen>:
     MDBoxLayout:
@@ -941,57 +1173,81 @@ RootSM:
             left_action_items: [["arrow-left", lambda x: app.back_home()]]
             elevation: 2
 
-        ScrollView:
+        MDScrollView:
+            do_scroll_x: False
+
             MDBoxLayout:
                 orientation: "vertical"
                 padding: dp(12)
-                spacing: dp(10)
+                spacing: dp(12)
                 size_hint_y: None
                 height: self.minimum_height
 
-                MDTextField:
-                    id: hunt_input
-                    hint_text: "Cole aqui o texto do Session Data (Tibia)"
-                    mode: "rectangle"
-                    multiline: True
+                AppCard:
                     size_hint_y: None
-                    height: dp(220)
+                    height: self.minimum_height
 
-                MDRaisedButton:
-                    text: "Analisar"
-                    on_release: app.hunt_parse()
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
+                        SectionTitle:
+                            text: "Entrada"
 
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(44)
-                    spacing: dp(8)
+                        HintText:
+                            text: "Cole aqui o texto do Session Data do Tibia."
 
+                        MDTextField:
+                            id: hunt_input
+                            hint_text: "Session Data"
+                            mode: "rectangle"
+                            multiline: True
+                            size_hint_y: None
+                            height: dp(220)
+
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Analisar"
+                                on_release: app.hunt_parse()
+
+                ActionRow:
                     MDRaisedButton:
                         id: hunt_copy_btn
                         text: "Copiar"
                         on_release: app.hunt_copy()
 
-                    MDRaisedButton:
-                        id: hunt_share_btn
+                    MDRectangleFlatIconButton:
+                        icon: "share-variant"
                         text: "Compartilhar"
                         on_release: app.hunt_share()
 
-                MDLabel:
+                HintText:
                     id: hunt_status
                     text: ""
-                    size_hint_y: None
-                    height: dp(24)
 
-                MDTextField:
-                    id: hunt_output
-                    hint_text: "Resultado"
-                    mode: "rectangle"
-                    multiline: True
-                    readonly: True
+                AppCard:
                     size_hint_y: None
-                    height: dp(260)
+                    height: self.minimum_height
 
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Resultado"
+
+                        MDTextField:
+                            id: hunt_output
+                            hint_text: "Resultado"
+                            mode: "rectangle"
+                            multiline: True
+                            readonly: True
+                            size_hint_y: None
+                            height: dp(260)
 
 <StaminaScreen@MDScreen>:
     MDBoxLayout:
@@ -1002,87 +1258,89 @@ RootSM:
             left_action_items: [["arrow-left", lambda x: app.back_home()]]
             elevation: 2
 
-        ScrollView:
+        MDScrollView:
             do_scroll_x: False
 
             MDBoxLayout:
                 orientation: "vertical"
                 padding: dp(12)
-                spacing: dp(10)
+                spacing: dp(12)
                 size_hint_y: None
                 height: self.minimum_height
 
-                MDLabel:
-                    text: "Calculadora de Stamina (offline)"
-                    bold: True
+                AppCard:
                     size_hint_y: None
-                    height: self.texture_size[1] + dp(6)
+                    height: self.minimum_height
 
-                MDLabel:
-                    text: "A regeneração começa 10 min após deslogar. Até 39:00 é mais rápida; de 39:00 a 42:00 (bônus/verde) é mais lenta."
-                    halign: "left"
-                    valign: "top"
-                    text_size: self.width, None
-                    size_hint_y: None
-                    height: self.texture_size[1] + dp(10)
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
-                MDLabel:
-                    text: "Stamina atual"
-                    size_hint_y: None
-                    height: dp(20)
+                        SectionTitle:
+                            text: "Calculadora de Stamina (offline)"
 
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(56)
-                    spacing: dp(8)
+                        HintText:
+                            text: "A regeneração começa 10 min após deslogar. Até 39:00 é mais rápida; de 39:00 a 42:00 (verde) é mais lenta."
 
-                    MDTextField:
-                        id: stam_cur_h
-                        hint_text: "Horas"
-                        mode: "rectangle"
-                        input_filter: "int"
+                        MDLabel:
+                            text: "Stamina atual"
+                            size_hint_y: None
+                            height: dp(20)
 
-                    MDTextField:
-                        id: stam_cur_m
-                        hint_text: "Min"
-                        mode: "rectangle"
-                        input_filter: "int"
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
 
-                MDLabel:
-                    text: "Stamina desejada"
-                    size_hint_y: None
-                    height: dp(20)
+                            MDTextField:
+                                id: stam_cur_h
+                                hint_text: "Horas"
+                                mode: "rectangle"
+                                input_filter: "int"
 
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(56)
-                    spacing: dp(8)
+                            MDTextField:
+                                id: stam_cur_m
+                                hint_text: "Min"
+                                mode: "rectangle"
+                                input_filter: "int"
 
-                    MDTextField:
-                        id: stam_tgt_h
-                        hint_text: "Horas"
-                        mode: "rectangle"
-                        input_filter: "int"
+                        MDLabel:
+                            text: "Stamina desejada"
+                            size_hint_y: None
+                            height: dp(20)
 
-                    MDTextField:
-                        id: stam_tgt_m
-                        hint_text: "Min"
-                        mode: "rectangle"
-                        input_filter: "int"
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
 
-                MDRaisedButton:
-                    text: "Calcular"
-                    on_release: app.stamina_calculate()
+                            MDTextField:
+                                id: stam_tgt_h
+                                hint_text: "Horas"
+                                mode: "rectangle"
+                                input_filter: "int"
 
-                MDLabel:
-                    id: stam_result
-                    text: ""
-                    halign: "left"
-                    valign: "top"
-                    text_size: self.width, None
-                    size_hint_y: None
-                    height: self.texture_size[1] + dp(20)
+                            MDTextField:
+                                id: stam_tgt_m
+                                hint_text: "Min"
+                                mode: "rectangle"
+                                input_filter: "int"
 
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Calcular"
+                                on_release: app.stamina_calculate()
+
+                        MDLabel:
+                            id: stam_result
+                            text: ""
+                            halign: "left"
+                            valign: "top"
+                            text_size: self.width, None
+                            size_hint_y: None
+                            height: self.texture_size[1] + dp(20)
 
 <SettingsScreen@MDScreen>:
     MDBoxLayout:
@@ -1093,7 +1351,7 @@ RootSM:
             left_action_items: [["arrow-left", lambda x: app.back_home()]]
             elevation: 2
 
-        ScrollView:
+        MDScrollView:
             do_scroll_x: False
 
             MDBoxLayout:
@@ -1103,181 +1361,188 @@ RootSM:
                 size_hint_y: None
                 height: self.minimum_height
 
-                MDLabel:
-                    text: "Aparência"
-                    bold: True
+                AppCard:
                     size_hint_y: None
-                    height: dp(24)
+                    height: self.minimum_height
 
-                MDBoxLayout:
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Aparência"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Tema claro"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_theme_light
+                                active: False
+
+                AppCard:
                     size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
+                    height: self.minimum_height
 
-                    MDLabel:
-                        text: "Tema claro"
-                        valign: "middle"
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
-                    MDSwitch:
-                        id: set_theme_light
-                        active: False
+                        SectionTitle:
+                            text: "Notificações (ao abrir o app)"
 
-                MDSeparator:
-                    height: dp(1)
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
 
-                MDLabel:
-                    text: "Notificações (ao abrir o app)"
-                    bold: True
+                            MDLabel:
+                                text: "Boosted mudou"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_notify_boosted
+                                active: False
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Boss favorito High"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_notify_boss_high
+                                active: False
+
+                AppCard:
                     size_hint_y: None
-                    height: dp(24)
+                    height: self.minimum_height
 
-                MDBoxLayout:
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Favoritos (segundo plano)"
+
+                        HintText:
+                            text: "Notificações mesmo com o app fechado. Isso roda como serviço em primeiro plano (pode aparecer um aviso fixo do Android)."
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Monitorar favoritos"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_monitor
+                                active: True
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Avisar quando ficar online"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_notify_online
+                                active: True
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Avisar quando upar level"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_notify_level
+                                active: True
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Avisar quando morrer"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_notify_death
+                                active: True
+
+                        MDTextField:
+                            id: set_bg_interval
+                            hint_text: "Intervalo do monitor (segundos) - ex: 60"
+                            text: "60"
+                            mode: "rectangle"
+                            input_filter: "int"
+
+                AppCard:
                     size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
+                    height: self.minimum_height
 
-                    MDLabel:
-                        text: "Boosted mudou"
-                        valign: "middle"
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
 
-                    MDSwitch:
-                        id: set_notify_boosted
-                        active: False
+                        SectionTitle:
+                            text: "Updates (GitHub)"
 
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
+                        MDTextField:
+                            id: set_repo_url
+                            hint_text: "URL do repo (ex: https://github.com/user/repo)"
+                            mode: "rectangle"
 
-                    MDLabel:
-                        text: "Boss favorito High"
-                        valign: "middle"
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Salvar"
+                                on_release: app.settings_save()
 
-                    MDSwitch:
-                        id: set_notify_boss_high
-                        active: False
+                            MDRectangleFlatIconButton:
+                                icon: "cloud-download-outline"
+                                text: "Checar"
+                                on_release: app.settings_check_updates()
 
+                        ActionRow:
+                            MDRectangleFlatIconButton:
+                                icon: "github"
+                                text: "Releases"
+                                on_release: app.settings_open_releases()
 
-                MDSeparator:
-                    height: dp(1)
+                            MDRectangleFlatIconButton:
+                                icon: "broom"
+                                text: "Limpar cache"
+                                on_release: app.settings_clear_cache()
 
-                MDLabel:
-                    text: "Favoritos (segundo plano)"
-                    bold: True
-                    size_hint_y: None
-                    height: dp(24)
-
-                MDLabel:
-                    text: "Notificações mesmo com o app fechado. Isso roda como serviço em primeiro plano (pode aparecer um aviso fixo do Android)."
-                    theme_text_color: "Hint"
-                    size_hint_y: None
-                    height: self.texture_size[1] + dp(6)
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
-
-                    MDLabel:
-                        text: "Monitorar favoritos"
-                        valign: "middle"
-
-                    MDSwitch:
-                        id: set_bg_monitor
-                        active: True
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
-
-                    MDLabel:
-                        text: "Avisar quando ficar online"
-                        valign: "middle"
-
-                    MDSwitch:
-                        id: set_bg_notify_online
-                        active: True
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
-
-                    MDLabel:
-                        text: "Avisar quando upar level"
-                        valign: "middle"
-
-                    MDSwitch:
-                        id: set_bg_notify_level
-                        active: True
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(48)
-                    spacing: dp(10)
-
-                    MDLabel:
-                        text: "Avisar quando morrer"
-                        valign: "middle"
-
-                    MDSwitch:
-                        id: set_bg_notify_death
-                        active: True
-
-                MDTextField:
-                    id: set_bg_interval
-                    hint_text: "Intervalo do monitor (segundos) - ex: 60"
-                    text: "60"
-                    mode: "rectangle"
-                    input_filter: "int"
-
-                MDSeparator:
-                    height: dp(1)
-
-                MDLabel:
-                    text: "Updates (GitHub)"
-                    bold: True
-                    size_hint_y: None
-                    height: dp(24)
-
-                MDTextField:
-                    id: set_repo_url
-                    hint_text: "URL do repo (ex: https://github.com/user/repo)"
-                    mode: "rectangle"
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(44)
-                    spacing: dp(10)
-
-                    MDRaisedButton:
-                        text: "Salvar"
-                        on_release: app.settings_save()
-
-                    MDRaisedButton:
-                        text: "Checar"
-                        on_release: app.settings_check_updates()
-
-                MDBoxLayout:
-                    size_hint_y: None
-                    height: dp(44)
-                    spacing: dp(10)
-
-                    MDRaisedButton:
-                        text: "Abrir releases"
-                        on_release: app.settings_open_releases()
-
-                    MDRaisedButton:
-                        text: "Limpar cache"
-                        on_release: app.settings_clear_cache()
-
-                MDLabel:
-                    id: set_status
-                    text: ""
-                    theme_text_color: "Hint"
-                    size_hint_y: None
-                    height: self.texture_size[1] + dp(6)
+                        HintText:
+                            id: set_status
+                            text: ""
 
 
 <BossFavoritesScreen@MDScreen>:
@@ -1290,17 +1555,37 @@ RootSM:
             right_action_items: [["refresh", lambda x: app.boss_favorites_refresh()]]
             elevation: 2
 
-        MDBoxLayout:
-            orientation: "vertical"
-            padding: dp(12)
-            spacing: dp(10)
+        MDScrollView:
+            do_scroll_x: False
 
-            MDLabel:
-                id: boss_fav_status
-                text: "Favoritos: -"
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
                 size_hint_y: None
-                height: dp(24)
+                height: self.minimum_height
 
-            ScrollView:
-                MDList:
-                    id: boss_fav_list
+                HintText:
+                    id: boss_fav_status
+                    text: "Favoritos: -"
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Lista"
+
+                        MDSeparator:
+                            height: dp(1)
+
+                        MDList:
+                            id: boss_fav_list
+                            size_hint_y: None
+                            height: self.minimum_height

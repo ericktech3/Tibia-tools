@@ -33,7 +33,7 @@ from kivy.uix.behaviors import ButtonBehavior
 
 from kivymd.app import MDApp
 from kivymd.uix.dialog import MDDialog
-from kivymd.uix.button import MDFlatButton
+from kivymd.uix.button import MDFlatButton, MDRectangleFlatIconButton
 from kivymd.uix.list import (
     OneLineIconListItem,
     OneLineListItem,
@@ -43,6 +43,7 @@ from kivymd.uix.list import (
 from kivymd.uix.menu import MDDropdownMenu
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.behaviors import RectangularRippleBehavior
+from kivymd.uix.scrollview import MDScrollView
 
 # ---- IMPORTS DO CORE (com proteção para não “fechar sozinho” no Android) ----
 _CORE_IMPORT_ERROR = None
