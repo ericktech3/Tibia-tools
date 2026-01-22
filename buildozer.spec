@@ -26,7 +26,7 @@ version = 0.1.0
 
 # (list) Application requirements
 # ✅ trava o KivyMD na versão compatível com MDBottomNavigation etc.
-requirements = python3,kivy,kivymd==1.2.0,requests,urllib3,idna,charset-normalizer,chardet,certifi,beautifulsoup4,soupsieve,typing_extensions
+requirements = python3,kivy,kivymd==1.2.0,requests,urllib3,idna,charset-normalizer,chardet,certifi,beautifulsoup4,soupsieve,typing_extensions,pillow
 
 # (str) Supported orientation (one of landscape, portrait or all)
 orientation = portrait
