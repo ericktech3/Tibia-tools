@@ -81,17 +81,45 @@ RootSM:
                                         icon: "refresh"
                                         on_release: app.dashboard_refresh()
 
-                                MDLabel:
-                                    id: dash_boost_creature
-                                    text: "Creature: -"
+                                MDBoxLayout:
+                                    orientation: "horizontal"
+                                    spacing: dp(10)
                                     size_hint_y: None
-                                    height: self.texture_size[1] + dp(6)
+                                    height: dp(56)
+                                    AsyncImage:
+                                        id: dash_boost_creature_sprite
+                                        source: ""
+                                        size_hint: None, None
+                                        size: dp(48), dp(48)
+                                        allow_stretch: True
+                                        keep_ratio: True
+                                        opacity: 1 if self.source else 0
+                                    MDLabel:
+                                        id: dash_boost_creature
+                                        text: "-"
+                                        valign: "middle"
+                                        halign: "left"
+                                        text_size: self.size
 
-                                MDLabel:
-                                    id: dash_boost_boss
-                                    text: "Boss: -"
+                                MDBoxLayout:
+                                    orientation: "horizontal"
+                                    spacing: dp(10)
                                     size_hint_y: None
-                                    height: self.texture_size[1] + dp(6)
+                                    height: dp(56)
+                                    AsyncImage:
+                                        id: dash_boost_boss_sprite
+                                        source: ""
+                                        size_hint: None, None
+                                        size: dp(48), dp(48)
+                                        allow_stretch: True
+                                        keep_ratio: True
+                                        opacity: 1 if self.source else 0
+                                    MDLabel:
+                                        id: dash_boost_boss
+                                        text: "-"
+                                        valign: "middle"
+                                        halign: "left"
+                                        text_size: self.size
 
                                 MDLabel:
                                     id: dash_boost_updated
@@ -588,25 +616,73 @@ RootSM:
                 size_hint_y: None
                 height: dp(24)
 
-            MDCard:
-                padding: dp(12)
+            MDBoxLayout:
+                orientation: "horizontal"
+                spacing: dp(12)
                 size_hint_y: None
-                height: dp(120)
-                MDBoxLayout:
-                    orientation: "vertical"
-                    spacing: dp(6)
-                    MDLabel:
-                        text: "Boosted Creature:"
-                        bold: True
-                    MDLabel:
-                        id: boost_creature
-                        text: "-"
-                    MDLabel:
-                        text: "Boosted Boss:"
-                        bold: True
-                    MDLabel:
-                        id: boost_boss
-                        text: "-"
+                height: dp(130)
+
+                MDCard:
+                    padding: dp(10)
+                    size_hint_x: 0.5
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        MDLabel:
+                            text: "Boosted Creature"
+                            bold: True
+                            size_hint_y: None
+                            height: dp(20)
+                        MDBoxLayout:
+                            orientation: "horizontal"
+                            spacing: dp(10)
+                            size_hint_y: None
+                            height: dp(56)
+                            AsyncImage:
+                                id: boost_creature_sprite
+                                source: ""
+                                size_hint: None, None
+                                size: dp(56), dp(56)
+                                allow_stretch: True
+                                keep_ratio: True
+                                opacity: 1 if self.source else 0
+                            MDLabel:
+                                id: boost_creature
+                                text: "-"
+                                valign: "middle"
+                                halign: "left"
+                                text_size: self.size
+
+                MDCard:
+                    padding: dp(10)
+                    size_hint_x: 0.5
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        MDLabel:
+                            text: "Boosted Boss"
+                            bold: True
+                            size_hint_y: None
+                            height: dp(20)
+                        MDBoxLayout:
+                            orientation: "horizontal"
+                            spacing: dp(10)
+                            size_hint_y: None
+                            height: dp(56)
+                            AsyncImage:
+                                id: boost_boss_sprite
+                                source: ""
+                                size_hint: None, None
+                                size: dp(56), dp(56)
+                                allow_stretch: True
+                                keep_ratio: True
+                                opacity: 1 if self.source else 0
+                            MDLabel:
+                                id: boost_boss
+                                text: "-"
+                                valign: "middle"
+                                halign: "left"
+                                text_size: self.size
 
             MDSeparator:
                 height: dp(1)

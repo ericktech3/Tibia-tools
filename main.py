@@ -812,16 +812,25 @@ class TibiaToolsApp(MDApp):
         cached_boost = self._cache_get("boosted", ttl_seconds=12 * 3600) or {}
         if isinstance(cached_boost, dict) and cached_boost:
             try:
-                ids.dash_boost_creature.text = f"Creature: {cached_boost.get('creature', '-')}"
-                ids.dash_boost_boss.text = f"Boss: {cached_boost.get('boss', '-')}"
+                ids.dash_boost_creature.text = (cached_boost.get('creature') or '-')
+                ids.dash_boost_boss.text = (cached_boost.get('boss') or '-')
+                # sprites no dashboard (quando disponíveis)
+                if "dash_boost_creature_sprite" in ids:
+                    ids.dash_boost_creature_sprite.source = cached_boost.get("creature_image") or ""
+                if "dash_boost_boss_sprite" in ids:
+                    ids.dash_boost_boss_sprite.source = cached_boost.get("boss_image") or ""
                 ts = self.cache.get("boosted", {}).get("ts", "")
                 ids.dash_boost_updated.text = f"Atualizado: {ts.split('T')[0] if ts else ''}"
             except Exception:
                 pass
         else:
             try:
-                ids.dash_boost_creature.text = "Creature: -"
-                ids.dash_boost_boss.text = "Boss: -"
+                ids.dash_boost_creature.text = "-"
+                ids.dash_boost_boss.text = "-"
+                if "dash_boost_creature_sprite" in ids:
+                    ids.dash_boost_creature_sprite.source = ""
+                if "dash_boost_boss_sprite" in ids:
+                    ids.dash_boost_boss_sprite.source = ""
                 ids.dash_boost_updated.text = "Sem cache ainda."
             except Exception:
                 pass
@@ -3078,11 +3087,39 @@ class TibiaToolsApp(MDApp):
         scr.ids.boost_creature.text = data.get("creature", "N/A")
         scr.ids.boost_boss.text = data.get("boss", "N/A")
 
+        # sprites (quando disponíveis)
+        try:
+            if "boost_creature_sprite" in scr.ids:
+                scr.ids.boost_creature_sprite.source = data.get("creature_image") or ""
+            if "boost_boss_sprite" in scr.ids:
+                scr.ids.boost_boss_sprite.source = data.get("boss_image") or ""
+        except Exception:
+            pass
+
         # cache + histórico (7 dias)
         try:
             self._cache_set("boosted", data)
         except Exception:
             pass
+
+        # também atualiza o card do Dashboard (Home)
+        try:
+            home = self.root.get_screen("home")
+            hids = home.ids
+            if "dash_boost_creature" in hids:
+                hids.dash_boost_creature.text = data.get("creature", "-") or "-"
+            if "dash_boost_boss" in hids:
+                hids.dash_boost_boss.text = data.get("boss", "-") or "-"
+            if "dash_boost_creature_sprite" in hids:
+                hids.dash_boost_creature_sprite.source = data.get("creature_image") or ""
+            if "dash_boost_boss_sprite" in hids:
+                hids.dash_boost_boss_sprite.source = data.get("boss_image") or ""
+            ts = self.cache.get("boosted", {}).get("ts", "")
+            if "dash_boost_updated" in hids:
+                hids.dash_boost_updated.text = f"Atualizado: {ts.split('T')[0] if ts else ''}"
+        except Exception:
+            pass
+
 
         try:
             hist = self._prefs_get("boosted_history", []) or []
