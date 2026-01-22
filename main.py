@@ -17,7 +17,7 @@ import webbrowser
 import traceback
 import math
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from typing import List, Optional
 
@@ -105,6 +105,7 @@ class TibiaToolsApp(MDApp):
         self._fav_items = {}  # lower(char_name) -> list item
         self._fav_status_cache = {}  # lower(char_name) -> last known "online"/"offline"
         self._fav_world_cache = {}  # lower(char_name) -> cached world
+        self._fav_last_login_cache = {}  # lower(char_name) -> last_login ISO (UTC)
         self._fav_status_job_id = 0
         self._fav_refresh_event = None
 
@@ -1059,6 +1060,271 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
+
+
+    # --------------------
+    # Offline duration helpers ("última vez online")
+    # --------------------
+    def _eu_dst_offset_hours(self, dt_local: datetime) -> int:
+        """Retorna offset CET/CEST (horas) assumindo regra EU.
+
+        Usado quando a API não informa timezone.
+        """
+        try:
+            y = dt_local.year
+            # last Sunday of March
+            import calendar
+            def last_sunday(year: int, month: int) -> datetime:
+                last_day = calendar.monthrange(year, month)[1]
+                d = datetime(year, month, last_day)
+                # weekday: Monday=0 ... Sunday=6
+                delta = (d.weekday() - 6) % 7
+                return d - timedelta(days=delta)
+
+            start = last_sunday(y, 3).replace(hour=2, minute=0, second=0, microsecond=0)  # 02:00 local
+            end = last_sunday(y, 10).replace(hour=3, minute=0, second=0, microsecond=0)   # 03:00 local
+            if start <= dt_local < end:
+                return 2  # CEST
+            return 1      # CET
+        except Exception:
+            # fallback simples
+            try:
+                return 2 if 4 <= int(dt_local.month) <= 9 else 1
+            except Exception:
+                return 1
+
+    def _parse_tibia_datetime(self, raw: str) -> Optional[datetime]:
+        """Tenta converter datas vindas do TibiaData/tibia.com para datetime UTC (naive)."""
+        if not isinstance(raw, str):
+            return None
+        s = raw.strip()
+        if not s or s.lower() in ("n/a", "none", "null"):
+            return None
+
+        # Normaliza alguns formatos
+        s2 = s.replace("\u00a0", " ").strip()
+        # ISO com Z
+        if s2.endswith('Z'):
+            try:
+                dt = datetime.fromisoformat(s2[:-1] + '+00:00')
+                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                pass
+
+        # ISO (talvez com offset)
+        try:
+            dt = datetime.fromisoformat(s2)
+            if dt.tzinfo is not None:
+                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        except Exception:
+            pass
+
+        # Formatos comuns do TibiaData (sem tz)
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d, %H:%M:%S", "%Y-%m-%d"):
+            try:
+                dt_local = datetime.strptime(s2, fmt)
+                off = self._eu_dst_offset_hours(dt_local)
+                return (dt_local - timedelta(hours=off))
+            except Exception:
+                continue
+
+        # Formato típico do tibia.com: "Jan 22 2026, 10:42:00 CET"
+        # Vamos remover o timezone e aplicar CET/CEST.
+        import re
+        m = re.match(r"^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4}),\s*(\d{2}:\d{2}:\d{2})(?:\s+([A-Za-z]{2,5}))?$", s2)
+        if m:
+            mon, day, year, hhmmss, tz = m.groups()
+            try:
+                dt_local = datetime.strptime(f"{mon} {day} {year}, {hhmmss}", "%b %d %Y, %H:%M:%S")
+            except Exception:
+                dt_local = None
+            if dt_local:
+                tz_u = (tz or "").upper().strip()
+                if tz_u == "CEST":
+                    off = 2
+                elif tz_u == "CET":
+                    off = 1
+                elif tz_u in ("UTC", "GMT"):
+                    off = 0
+                else:
+                    off = self._eu_dst_offset_hours(dt_local)
+                return dt_local - timedelta(hours=off)
+
+        return None
+
+    def _extract_last_login_dt_from_tibiadata(self, data: dict) -> Optional[datetime]:
+        """Extrai o 'last_login' (ou equivalente) do JSON do TibiaData."""
+        if not isinstance(data, dict):
+            return None
+        ch_wrap = data.get('character') or {}
+        ch = None
+        if isinstance(ch_wrap, dict):
+            ch = ch_wrap.get('character') if isinstance(ch_wrap.get('character'), dict) else ch_wrap
+        if not isinstance(ch, dict):
+            return None
+
+        # Possíveis chaves (variam por versão/API)
+        candidates = [
+            'last_login',
+            'lastLogin',
+            'last_logout',
+            'lastLogout',
+            'last_seen',
+            'lastSeen',
+            'last_online',
+            'lastOnline',
+        ]
+        raw = None
+        for k in candidates:
+            if k in ch and ch.get(k):
+                raw = ch.get(k)
+                break
+
+        # Às vezes vem como dict
+        if isinstance(raw, dict):
+            raw = raw.get('date') or raw.get('datetime') or raw.get('time')
+
+        if isinstance(raw, str):
+            return self._parse_tibia_datetime(raw)
+
+        return None
+
+    def _fetch_last_login_dt_tibia_com(self, name: str, timeout: int = 12) -> Optional[datetime]:
+        """Fallback: tenta pegar o 'Last Login' direto do tibia.com."""
+        try:
+            from bs4 import BeautifulSoup  # type: ignore
+        except Exception:
+            return None
+
+        try:
+            safe = urllib.parse.quote_plus(str(name))
+            url = f"https://www.tibia.com/community/?subtopic=characters&name={safe}"
+            hdr = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Linux; Android 13; Mobile) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Mobile Safari/537.36"
+                ),
+                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            }
+            r = requests.get(url, timeout=timeout, headers=hdr)
+            if r.status_code != 200:
+                return None
+            html = r.text or ""
+            if not html:
+                return None
+
+            soup = BeautifulSoup(html, "html.parser")
+            for tr in soup.find_all("tr"):
+                tds = tr.find_all("td")
+                if len(tds) < 2:
+                    continue
+                k = (tds[0].get_text(" ", strip=True) or "").strip().rstrip(":").strip().lower()
+                if k not in ("last login", "last login time", "last login:") and not k.startswith("last login"):
+                    continue
+                v = (tds[1].get_text(" ", strip=True) or "").strip()
+                dt = self._parse_tibia_datetime(v)
+                if dt:
+                    return dt
+            return None
+        except Exception:
+            return None
+
+    def _get_cached_fav_last_login_iso(self, name: str) -> Optional[str]:
+        key = (name or "").strip().lower()
+        if not key:
+            return None
+        try:
+            if key in getattr(self, "_fav_last_login_cache", {}):
+                v = self._fav_last_login_cache.get(key)
+                return str(v) if v else None
+        except Exception:
+            pass
+        cached = self._cache_get(f"fav_last_login:{key}")
+        if isinstance(cached, str) and cached.strip():
+            try:
+                self._fav_last_login_cache[key] = cached.strip()
+            except Exception:
+                pass
+            return cached.strip()
+        return None
+
+    def _set_cached_fav_last_login_iso(self, name: str, iso: Optional[str]) -> None:
+        key = (name or "").strip().lower()
+        if not key:
+            return
+        try:
+            if iso and str(iso).strip():
+                self._fav_last_login_cache[key] = str(iso).strip()
+                self._cache_set(f"fav_last_login:{key}", str(iso).strip())
+            else:
+                self._fav_last_login_cache.pop(key, None)
+                self._cache_set(f"fav_last_login:{key}", None)
+        except Exception:
+            pass
+
+    def _format_ago_short(self, dt_utc: datetime) -> str:
+        try:
+            now = datetime.utcnow()
+            sec = max(0, int((now - dt_utc).total_seconds()))
+            mins = sec // 60
+            if mins < 60:
+                return f"há {mins}m"
+            hrs = mins // 60
+            if hrs < 24:
+                return f"há {hrs}h"
+            days = hrs // 24
+            if days < 30:
+                return f"há {days}d"
+            # meses aproximados
+            months = days // 30
+            return f"há {months}m"
+        except Exception:
+            return ""
+
+    def _format_ago_long(self, dt_utc: datetime) -> str:
+        try:
+            now = datetime.utcnow()
+            sec = max(0, int((now - dt_utc).total_seconds()))
+            mins = sec // 60
+            if mins < 60:
+                n = mins
+                return f"há {n} minuto" + ("s" if n != 1 else "")
+            hrs = mins // 60
+            if hrs < 24:
+                n = hrs
+                return f"há {n} hora" + ("s" if n != 1 else "")
+            days = hrs // 24
+            if days < 30:
+                n = days
+                return f"há {n} dia" + ("s" if n != 1 else "")
+            months = days // 30
+            n = months
+            return f"há {n} mês" + ("es" if n != 1 else "")
+        except Exception:
+            return ""
+
+    def _fetch_last_login_iso_for_char(self, name: str) -> Optional[str]:
+        """Busca o last_login (UTC ISO) do char.
+
+        1) tenta TibiaData /v4/character
+        2) fallback tibia.com
+        """
+        try:
+            data = fetch_character_tibiadata(name, timeout=12)
+            dt = self._extract_last_login_dt_from_tibiadata(data)
+            if dt:
+                return dt.isoformat()
+        except Exception:
+            pass
+        try:
+            dt = self._fetch_last_login_dt_tibia_com(name, timeout=12)
+            if dt:
+                return dt.isoformat()
+        except Exception:
+            pass
+        return None
+
     def _set_initial_home_tab(self, *_):
         # abre direto no Dashboard
         self.select_home_tab("tab_dashboard")
@@ -1404,6 +1670,14 @@ class TibiaToolsApp(MDApp):
 
             # Usuário pediu para mostrar apenas ONLINE/OFFLINE (sem "Status:")
             add_one((st if st in ("online", "offline") else "offline").capitalize(), status_icon)
+            # Se estiver OFFLINE, mostra há quanto tempo (se disponível)
+            try:
+                if st == "offline":
+                    ago = str(payload.get("last_login_ago") or "").strip()
+                    if ago:
+                        add_two("Última vez online", ago, "clock-outline")
+            except Exception:
+                pass
             add_one(f"Vocation: {voc}", "account")
             add_one(f"Level: {level}", "signal")
             add_one(f"World: {world}", "earth")
@@ -1729,6 +2003,20 @@ class TibiaToolsApp(MDApp):
                     "exp_total_30": exp_total_30,
                     "gs_exp_url": gs_exp_url,
                 }
+
+                # "Última vez online" (offline duration)
+                try:
+                    last_dt = self._extract_last_login_dt_from_tibiadata(data)
+                    if status == "offline" and last_dt:
+                        payload["last_login_iso"] = last_dt.isoformat()
+                        payload["last_login_ago"] = self._format_ago_long(last_dt)
+                    else:
+                        payload["last_login_iso"] = None
+                        payload["last_login_ago"] = None
+                except Exception:
+                    payload["last_login_iso"] = None
+                    payload["last_login_ago"] = None
+
                 return True, payload, url
             except Exception as e:
                 return False, f"Erro: {e}", ""
@@ -1753,6 +2041,17 @@ class TibiaToolsApp(MDApp):
                     t = str((payload_or_msg or {}).get("title") or "").strip()
                     if w and w.upper() != "N/A" and t:
                         self._cache_set(f"fav_world:{t.lower()}", w)
+                except Exception:
+                    pass
+                # cache do last_login (para mostrar "há quanto tempo off" em Favoritos)
+                try:
+                    t = str((payload_or_msg or {}).get("title") or "").strip()
+                    stx = str((payload_or_msg or {}).get("status") or "").strip().lower()
+                    lli = (payload_or_msg or {}).get("last_login_iso")
+                    if t and stx == "offline" and isinstance(lli, str) and lli.strip():
+                        self._set_cached_fav_last_login_iso(t, lli.strip())
+                    elif t and stx == "online":
+                        self._set_cached_fav_last_login_iso(t, None)
                 except Exception:
                     pass
                 if not silent:
@@ -1824,7 +2123,8 @@ class TibiaToolsApp(MDApp):
         names = list(self.favorites)
         for name in names:
             state = None if force else self._get_cached_fav_status(name)
-            secondary, color = self._fav_status_presentation(state)
+            last_iso = self._get_cached_fav_last_login_iso(name) if str(state).strip().lower() == "offline" else None
+            secondary, color = self._fav_status_presentation(state, last_iso)
 
             item = TwoLineIconListItem(text=name, secondary_text=secondary)
             item.add_widget(IconLeftWidget(icon="account"))
@@ -1971,16 +2271,26 @@ class TibiaToolsApp(MDApp):
             return out
         except Exception:
             return None
-    def _fav_status_presentation(self, state) -> tuple[str, tuple]:
+    def _fav_status_presentation(self, state, last_login_iso: Optional[str] = None) -> tuple[str, tuple]:
         s = str(state).strip().lower() if state is not None else ""
         if s == "online" or state is True:
             return "Online", (0.2, 0.75, 0.35, 1)
         if s == "offline" or state is False:
-            return "Offline", (0.95, 0.3, 0.3, 1)
+            # Se tivermos last_login, mostramos "há X".
+            extra = ""
+            if last_login_iso:
+                try:
+                    dt = datetime.fromisoformat(str(last_login_iso).strip())
+                    ago = self._format_ago_short(dt)
+                    if ago:
+                        extra = f" • {ago}"
+                except Exception:
+                    extra = ""
+            return f"Offline{extra}", (0.95, 0.3, 0.3, 1)
         return "Atualizando...", (0.7, 0.7, 0.7, 1)
 
 
-    def _set_fav_item_status(self, name: str, state) -> None:
+    def _set_fav_item_status(self, name: str, state, last_login_iso: Optional[str] = None) -> None:
         """Atualiza o status (Online/Offline) no item da lista de favoritos e no cache.
 
         Este método é chamado via Clock no thread principal.
@@ -1989,6 +2299,13 @@ class TibiaToolsApp(MDApp):
             key = (name or "").strip().lower()
             if not key:
                 return
+
+            # online -> invalida last_login, para forçar refetch quando ficar offline de novo
+            if str(state).strip().lower() == "online":
+                self._set_cached_fav_last_login_iso(name, None)
+            # offline + temos last_login
+            if str(state).strip().lower() == "offline" and last_login_iso:
+                self._set_cached_fav_last_login_iso(name, str(last_login_iso).strip())
 
             # atualiza cache em memória + cache persistente simples
             self._fav_status_cache[key] = state
@@ -2001,7 +2318,10 @@ class TibiaToolsApp(MDApp):
             if not item:
                 return
 
-            label, color = self._fav_status_presentation(state)
+            li = last_login_iso
+            if str(state).strip().lower() == "offline" and not li:
+                li = self._get_cached_fav_last_login_iso(name)
+            label, color = self._fav_status_presentation(state, li)
             item.secondary_text = label
             item.secondary_text_color = color
         except Exception as e:
@@ -2118,7 +2438,22 @@ class TibiaToolsApp(MDApp):
                         return
                     is_on = (n or "").strip().lower() in online_set
                     st = "online" if is_on else "offline"
-                    Clock.schedule_once(lambda dt, nn=n, stt=st: self._set_fav_item_status(nn, stt), 0)
+
+                    # offline: tenta buscar/usar "last_login" para mostrar há quanto tempo está off
+                    last_iso = None
+                    if st == "offline":
+                        last_iso = self._get_cached_fav_last_login_iso(n)
+                        if not last_iso:
+                            k = (n or "").strip().lower()
+                            # evita repetir chamadas se a API falhar
+                            if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
+                                last_iso = self._fetch_last_login_iso_for_char(n)
+                                if last_iso:
+                                    self._set_cached_fav_last_login_iso(n, last_iso)
+                                else:
+                                    self._cache_set(f"fav_last_login_fail:{k}", True)
+
+                    Clock.schedule_once(lambda dt, nn=n, stt=st, li=last_iso: self._set_fav_item_status(nn, stt, li), 0)
 
             # 4) fallback (se não conseguimos world): tenta método antigo (tibia.com / endpoint do char)
             for n in unknown:
@@ -2129,7 +2464,20 @@ class TibiaToolsApp(MDApp):
                     # mantém último estado se existir, senão offline
                     k = (n or "").strip().lower()
                     st = getattr(self, "_fav_status_cache", {}).get(k) or "offline"
-                Clock.schedule_once(lambda dt, nn=n, stt=st: self._set_fav_item_status(nn, stt), 0)
+
+                last_iso = None
+                if str(st).strip().lower() == "offline":
+                    last_iso = self._get_cached_fav_last_login_iso(n)
+                    if not last_iso:
+                        k = (n or "").strip().lower()
+                        if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
+                            last_iso = self._fetch_last_login_iso_for_char(n)
+                            if last_iso:
+                                self._set_cached_fav_last_login_iso(n, last_iso)
+                            else:
+                                self._cache_set(f"fav_last_login_fail:{k}", True)
+
+                Clock.schedule_once(lambda dt, nn=n, stt=st, li=last_iso: self._set_fav_item_status(nn, stt, li), 0)
         finally:
             Clock.schedule_once(lambda _dt: setattr(self, "_fav_refreshing", False), 0)
 
