@@ -2159,11 +2159,13 @@ class TibiaToolsApp(MDApp):
                 except Exception:
                     pass
                 # cache do last_seen_online (para mostrar "há quanto tempo off" em Favoritos/Char)
-                                try:
-                                    t = str((payload_or_msg or {}).get("title") or "").strip()
-                                    stx = str((payload_or_msg or {}).get("status") or "").strip().lower()
-                                    if t and stx == "online":
-                                        self._set_cached_last_seen_online_iso(t, datetime.utcnow().isoformat())
+                try:
+                    t = str((payload_or_msg or {}).get("title") or "").strip()
+                    stx = str((payload_or_msg or {}).get("status") or "").strip().lower()
+                    if t and stx == "online":
+                        self._set_cached_last_seen_online_iso(t, datetime.utcnow().isoformat())
+                except Exception:
+                    pass
                 # cache do last_login (para mostrar "há quanto tempo off" em Favoritos)
                 try:
                     t = str((payload_or_msg or {}).get("title") or "").strip()
