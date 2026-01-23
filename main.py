@@ -22,6 +22,7 @@ from urllib.parse import quote
 from typing import List, Optional
 
 from kivy.core.clipboard import Clipboard
+from kivy.core.window import Window
 from kivy.lang import Builder
 from kivy.resources import resource_find
 from kivy.clock import Clock
@@ -42,6 +43,7 @@ from kivymd.uix.list import (
 )
 from kivymd.uix.menu import MDDropdownMenu
 from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.label import MDLabel
 from kivymd.uix.behaviors import RectangularRippleBehavior
 from kivymd.uix.scrollview import MDScrollView
 
@@ -117,6 +119,7 @@ class TibiaToolsApp(MDApp):
         self._fav_status_cache = {}  # lower(char_name) -> last known "online"/"offline"
         self._fav_world_cache = {}  # lower(char_name) -> cached world
         self._fav_last_login_cache = {}  # lower(char_name) -> last_login ISO (UTC)
+        self._last_seen_online_cache = {}  # lower(char_name) -> last time we saw ONLINE (UTC ISO)
         self._fav_status_job_id = 0
         self._fav_refresh_event = None
 
@@ -1300,6 +1303,56 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
+
+
+    def _get_cached_last_seen_online_iso(self, name: str) -> Optional[str]:
+        """Instante (UTC ISO) em que o app viu o char ONLINE pela última vez.
+
+        Tibia.com expõe "Last Login" (hora que entrou), não "Last Logout".
+        Para mostrar "há quanto tempo ficou OFF", usamos o último instante em que o app confirmou o ONLINE.
+        """
+        key = (name or "").strip().lower()
+        if not key:
+            return None
+
+        try:
+            if key in getattr(self, "_last_seen_online_cache", {}):
+                v = self._last_seen_online_cache.get(key)
+                return str(v) if v else None
+        except Exception:
+            pass
+
+        cached = self._cache_get(f"last_seen_online:{key}")
+        if isinstance(cached, str) and cached.strip():
+            try:
+                self._last_seen_online_cache[key] = cached.strip()
+            except Exception:
+                pass
+            return cached.strip()
+
+        # backward compat: usa cache antigo como fallback (menos preciso)
+        try:
+            return self._get_cached_fav_last_login_iso(name)
+        except Exception:
+            return None
+
+
+
+    def _set_cached_last_seen_online_iso(self, name: str, iso: Optional[str]) -> None:
+        key = (name or "").strip().lower()
+        if not key:
+            return
+        try:
+            if iso and str(iso).strip():
+                self._last_seen_online_cache[key] = str(iso).strip()
+                self._cache_set(f"last_seen_online:{key}", str(iso).strip())
+            else:
+                self._last_seen_online_cache.pop(key, None)
+                self._cache_set(f"last_seen_online:{key}", None)
+        except Exception:
+            pass
+
+
     def _format_ago_short(self, dt_utc: datetime) -> str:
         try:
             now = datetime.utcnow()
@@ -2043,16 +2096,41 @@ class TibiaToolsApp(MDApp):
 
                 # "Última vez online" (offline duration)
                 try:
-                    last_dt = self._extract_last_login_dt_from_tibiadata(data)
-                    if status == "offline" and last_dt:
-                        payload["last_login_iso"] = last_dt.isoformat()
-                        payload["last_login_ago"] = self._format_ago_long(last_dt)
-                    else:
+                    if status == "online":
+                        # atualiza sempre o instante em que vimos ONLINE (útil para calcular o OFF depois)
+                        try:
+                            self._set_cached_last_seen_online_iso(title, datetime.utcnow().isoformat())
+                        except Exception:
+                            pass
                         payload["last_login_iso"] = None
                         payload["last_login_ago"] = None
+                    else:
+                        seen_iso = self._get_cached_last_seen_online_iso(title)
+                        if seen_iso:
+                            try:
+                                dt = datetime.fromisoformat(str(seen_iso).strip())
+                                payload["last_login_iso"] = str(seen_iso).strip()
+                                payload["last_login_ago"] = self._format_ago_long(dt)
+                            except Exception:
+                                payload["last_login_iso"] = None
+                                payload["last_login_ago"] = None
+                        else:
+                            # Fallback (menos preciso): TibiaData "Last Login" (hora que entrou).
+                            last_dt = None
+                            try:
+                                last_dt = self._extract_last_login_dt_from_tibiadata(data)
+                            except Exception:
+                                last_dt = None
+                            if last_dt:
+                                payload["last_login_iso"] = last_dt.isoformat()
+                                payload["last_login_ago"] = self._format_ago_long(last_dt)
+                            else:
+                                payload["last_login_iso"] = None
+                                payload["last_login_ago"] = None
                 except Exception:
                     payload["last_login_iso"] = None
                     payload["last_login_ago"] = None
+
 
                 return True, payload, url
             except Exception as e:
@@ -2080,6 +2158,12 @@ class TibiaToolsApp(MDApp):
                         self._cache_set(f"fav_world:{t.lower()}", w)
                 except Exception:
                     pass
+                # cache do last_seen_online (para mostrar "há quanto tempo off" em Favoritos/Char)
+                                try:
+                                    t = str((payload_or_msg or {}).get("title") or "").strip()
+                                    stx = str((payload_or_msg or {}).get("status") or "").strip().lower()
+                                    if t and stx == "online":
+                                        self._set_cached_last_seen_online_iso(t, datetime.utcnow().isoformat())
                 # cache do last_login (para mostrar "há quanto tempo off" em Favoritos)
                 try:
                     t = str((payload_or_msg or {}).get("title") or "").strip()
@@ -2161,7 +2245,8 @@ class TibiaToolsApp(MDApp):
         for name in names:
             state = None if force else self._get_cached_fav_status(name)
             last_iso = self._get_cached_fav_last_login_iso(name) if str(state).strip().lower() == "offline" else None
-            secondary, color = self._fav_status_presentation(state, last_iso)
+            seen_iso = self._get_cached_last_seen_online_iso(name) if str(state).strip().lower() == "offline" else None
+            secondary, color = self._fav_status_presentation(state, seen_iso, last_iso)
 
             item = TwoLineIconListItem(text=name, secondary_text=secondary)
             item.add_widget(IconLeftWidget(icon="account"))
@@ -2308,16 +2393,21 @@ class TibiaToolsApp(MDApp):
             return out
         except Exception:
             return None
-    def _fav_status_presentation(self, state, last_login_iso: Optional[str] = None) -> tuple[str, tuple]:
+    def _fav_status_presentation(
+        self,
+        state,
+        last_seen_online_iso: Optional[str] = None,
+        fallback_last_login_iso: Optional[str] = None,
+    ) -> tuple[str, tuple]:
         s = str(state).strip().lower() if state is not None else ""
         if s == "online" or state is True:
             return "Online", (0.2, 0.75, 0.35, 1)
         if s == "offline" or state is False:
-            # Se tivermos last_login, mostramos "há X".
             extra = ""
-            if last_login_iso:
+            iso = last_seen_online_iso or fallback_last_login_iso
+            if iso:
                 try:
-                    dt = datetime.fromisoformat(str(last_login_iso).strip())
+                    dt = datetime.fromisoformat(str(iso).strip())
                     ago = self._format_ago_short(dt)
                     if ago:
                         extra = f" • {ago}"
@@ -2327,7 +2417,13 @@ class TibiaToolsApp(MDApp):
         return "Atualizando...", (0.7, 0.7, 0.7, 1)
 
 
-    def _set_fav_item_status(self, name: str, state, last_login_iso: Optional[str] = None) -> None:
+    def _set_fav_item_status(
+        self,
+        name: str,
+        state,
+        last_seen_online_iso: Optional[str] = None,
+        fallback_last_login_iso: Optional[str] = None,
+    ) -> None:
         """Atualiza o status (Online/Offline) no item da lista de favoritos e no cache.
 
         Este método é chamado via Clock no thread principal.
@@ -2337,14 +2433,22 @@ class TibiaToolsApp(MDApp):
             if not key:
                 return
 
-            # online -> invalida last_login, para forçar refetch quando ficar offline de novo
+            # ONLINE: atualiza o "last seen online" (usado para calcular há quanto tempo ficou OFF)
             if str(state).strip().lower() == "online":
-                self._set_cached_fav_last_login_iso(name, None)
-            # offline + temos last_login
-            if str(state).strip().lower() == "offline" and last_login_iso:
-                self._set_cached_fav_last_login_iso(name, str(last_login_iso).strip())
+                try:
+                    now_iso = last_seen_online_iso or datetime.utcnow().isoformat()
+                    self._set_cached_last_seen_online_iso(name, now_iso)
+                except Exception:
+                    pass
 
-            # atualiza cache em memória + cache persistente simples
+            # OFFLINE: mantém o last_seen_online (última vez que vimos online).
+            # Se nunca vimos online, guardamos um fallback (Last Login) só para não ficar vazio.
+            if str(state).strip().lower() == "offline" and fallback_last_login_iso:
+                try:
+                    self._set_cached_fav_last_login_iso(name, str(fallback_last_login_iso).strip())
+                except Exception:
+                    pass
+
             self._fav_status_cache[key] = state
             try:
                 self._cache_set(f"fav_status:{key}", state)
@@ -2355,14 +2459,17 @@ class TibiaToolsApp(MDApp):
             if not item:
                 return
 
-            li = last_login_iso
-            if str(state).strip().lower() == "offline" and not li:
-                li = self._get_cached_fav_last_login_iso(name)
-            label, color = self._fav_status_presentation(state, li)
+            seen = last_seen_online_iso or self._get_cached_last_seen_online_iso(name)
+
+            fb = None
+            if not seen:
+                fb = fallback_last_login_iso or self._get_cached_fav_last_login_iso(name)
+
+            label, color = self._fav_status_presentation(state, seen, fb)
             item.secondary_text = label
             item.secondary_text_color = color
-        except Exception as e:
-            print(f"[FAV] Erro ao atualizar status de '{name}': {e}")
+        except Exception:
+            pass
 
     def _dismiss_fav_menu(self) -> None:
         try:
@@ -2476,21 +2583,34 @@ class TibiaToolsApp(MDApp):
                     is_on = (n or "").strip().lower() in online_set
                     st = "online" if is_on else "offline"
 
-                    # offline: tenta buscar/usar "last_login" para mostrar há quanto tempo está off
-                    last_iso = None
-                    if st == "offline":
-                        last_iso = self._get_cached_fav_last_login_iso(n)
-                        if not last_iso:
-                            k = (n or "").strip().lower()
-                            # evita repetir chamadas se a API falhar
-                            if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
-                                last_iso = self._fetch_last_login_iso_for_char(n)
-                                if last_iso:
-                                    self._set_cached_fav_last_login_iso(n, last_iso)
-                                else:
-                                    self._cache_set(f"fav_last_login_fail:{k}", True)
+                    # Para "há quanto tempo está off": usamos o último instante em que o app confirmou ONLINE.
+                    seen_iso = None
+                    fallback_login_iso = None
 
-                    Clock.schedule_once(lambda dt, nn=n, stt=st, li=last_iso: self._set_fav_item_status(nn, stt, li), 0)
+                    if st == "online":
+                        try:
+                            seen_iso = datetime.utcnow().isoformat()
+                            self._set_cached_last_seen_online_iso(n, seen_iso)
+                        except Exception:
+                            seen_iso = None
+                    else:
+                        seen_iso = self._get_cached_last_seen_online_iso(n)
+                        if not seen_iso:
+                            # Fallback: Last Login (menos preciso), apenas se nunca vimos online.
+                            fallback_login_iso = self._get_cached_fav_last_login_iso(n)
+                            if not fallback_login_iso:
+                                k = (n or "").strip().lower()
+                                if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
+                                    fallback_login_iso = self._fetch_last_login_iso_for_char(n)
+                                    if fallback_login_iso:
+                                        self._set_cached_fav_last_login_iso(n, fallback_login_iso)
+                                    else:
+                                        self._cache_set(f"fav_last_login_fail:{k}", True)
+
+                    Clock.schedule_once(
+                        lambda dt, nn=n, stt=st, si=seen_iso, fi=fallback_login_iso: self._set_fav_item_status(nn, stt, si, fi),
+                        0,
+                    )
 
             # 4) fallback (se não conseguimos world): tenta método antigo (tibia.com / endpoint do char)
             for n in unknown:
@@ -2502,19 +2622,31 @@ class TibiaToolsApp(MDApp):
                     k = (n or "").strip().lower()
                     st = getattr(self, "_fav_status_cache", {}).get(k) or "offline"
 
-                last_iso = None
-                if str(st).strip().lower() == "offline":
-                    last_iso = self._get_cached_fav_last_login_iso(n)
-                    if not last_iso:
-                        k = (n or "").strip().lower()
-                        if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
-                            last_iso = self._fetch_last_login_iso_for_char(n)
-                            if last_iso:
-                                self._set_cached_fav_last_login_iso(n, last_iso)
-                            else:
-                                self._cache_set(f"fav_last_login_fail:{k}", True)
+                seen_iso = None
+                fallback_login_iso = None
+                if str(st).strip().lower() == "online":
+                    try:
+                        seen_iso = datetime.utcnow().isoformat()
+                        self._set_cached_last_seen_online_iso(n, seen_iso)
+                    except Exception:
+                        seen_iso = None
+                else:
+                    seen_iso = self._get_cached_last_seen_online_iso(n)
+                    if not seen_iso:
+                        fallback_login_iso = self._get_cached_fav_last_login_iso(n)
+                        if not fallback_login_iso:
+                            k = (n or "").strip().lower()
+                            if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
+                                fallback_login_iso = self._fetch_last_login_iso_for_char(n)
+                                if fallback_login_iso:
+                                    self._set_cached_fav_last_login_iso(n, fallback_login_iso)
+                                else:
+                                    self._cache_set(f"fav_last_login_fail:{k}", True)
 
-                Clock.schedule_once(lambda dt, nn=n, stt=st, li=last_iso: self._set_fav_item_status(nn, stt, li), 0)
+                Clock.schedule_once(
+                    lambda dt, nn=n, stt=st, si=seen_iso, fi=fallback_login_iso: self._set_fav_item_status(nn, stt, si, fi),
+                    0,
+                )
         finally:
             Clock.schedule_once(lambda _dt: setattr(self, "_fav_refreshing", False), 0)
 
@@ -2830,6 +2962,7 @@ class TibiaToolsApp(MDApp):
         self.boss_favorites_refresh()
 
     def bosses_open_dialog(self, boss_dict):
+        """Dialog de ações do boss (favoritar/copiar/abrir) com layout que não quebra em telas pequenas."""
         try:
             name = str(boss_dict.get("boss") or boss_dict.get("name") or "Boss").strip()
             chance = str(boss_dict.get("chance") or "").strip()
@@ -2838,14 +2971,28 @@ class TibiaToolsApp(MDApp):
             return
 
         url = self._boss_wiki_url(name)
+        is_fav = self.boss_is_favorite(name)
 
-        def toggle(*_):
-            fav = self.boss_toggle_favorite(name)
-            self.toast("Favoritado." if fav else "Removido dos favoritos.")
+        txt = "\n".join([x for x in [f"Chance: {chance}" if chance else "", status] if x]).strip() or " "
+
+        # Conteúdo (texto + ações em lista) — evita estourar/ficar “fora” do dialog
+        content = MDBoxLayout(orientation="vertical", spacing=dp(8), size_hint_y=None)
+        content.bind(minimum_height=content.setter("height"))
+
+        lbl = MDLabel(text=txt, theme_text_color="Secondary", size_hint_y=None)
+        lbl.bind(texture_size=lambda inst, val: setattr(inst, "height", val[1] + dp(6)))
+        content.add_widget(lbl)
+
+        def close(*_):
             try:
                 dlg.dismiss()
             except Exception:
                 pass
+
+        def toggle(*_):
+            fav = self.boss_toggle_favorite(name)
+            self.toast("Favoritado." if fav else "Removido dos favoritos.")
+            close()
             self.bosses_apply_filters()
             self.dashboard_refresh()
 
@@ -2855,32 +3002,32 @@ class TibiaToolsApp(MDApp):
                 self.toast("Link copiado.")
             except Exception:
                 self.toast("Não consegui copiar.")
-            try:
-                dlg.dismiss()
-            except Exception:
-                pass
+            close()
 
         def open_url(*_):
             try:
                 webbrowser.open(url)
             except Exception:
                 self.toast("Não consegui abrir o navegador.")
-            try:
-                dlg.dismiss()
-            except Exception:
-                pass
+            close()
 
-        star = "REMOVER ⭐" if self.boss_is_favorite(name) else "FAVORITAR ⭐"
-        txt = "\n".join([x for x in [f"Chance: {chance}" if chance else "", status] if x]).strip() or " "
+        actions = [
+            (("Remover dos favoritos" if is_fav else "Adicionar aos favoritos"), ("star" if is_fav else "star-outline"), toggle),
+            ("Copiar link", "content-copy", copy),
+            ("Abrir no navegador", "open-in-new", open_url),
+        ]
+
+        for label, icon, cb in actions:
+            it = OneLineIconListItem(text=label)
+            it.add_widget(IconLeftWidget(icon=icon))
+            it.bind(on_release=cb)
+            content.add_widget(it)
+
         dlg = MDDialog(
             title=name,
-            text=txt,
-            buttons=[
-                MDFlatButton(text=star, on_release=toggle),
-                MDFlatButton(text="COPIAR LINK", on_release=copy),
-                MDFlatButton(text="ABRIR", on_release=open_url),
-                MDFlatButton(text="FECHAR", on_release=lambda *_: dlg.dismiss()),
-            ],
+            type="custom",
+            content_cls=content,
+            buttons=[MDFlatButton(text="FECHAR", on_release=close)],
         )
         dlg.open()
 
@@ -3006,7 +3153,15 @@ class TibiaToolsApp(MDApp):
             items = [{"text": w, "on_release": (lambda x=w: self._select_world(x))} for w in worlds[:400]]
             if self._menu_world:
                 self._menu_world.dismiss()
-            self._menu_world = MDDropdownMenu(caller=scr.ids.world_drop, items=items, width_mult=4, max_height=dp(420))
+            # menu de worlds: ancorado no campo (evita abrir 'fora' da tela)
+            field = scr.ids.world_field
+            arrow = scr.ids.world_drop
+            w = min((field.width + arrow.width) if field.width else (Window.width - dp(32)), Window.width - dp(32))
+            self._menu_world = MDDropdownMenu(caller=field, items=items, width_mult=1, max_height=dp(360))
+            try:
+                self._menu_world.width = w
+            except Exception:
+                pass
 
         def run():
             try:
@@ -3016,6 +3171,35 @@ class TibiaToolsApp(MDApp):
                 Clock.schedule_once(lambda *_: setattr(scr.ids.boss_status, "text", f"Erro: {e}"), 0)
 
         threading.Thread(target=run, daemon=True).start()
+
+
+
+    def open_world_menu(self):
+        """Abre o menu de Worlds ancorado no campo (corrige menu 'fora' da tela)."""
+        try:
+            scr = self.root.get_screen("bosses")
+            field = scr.ids.world_field
+            arrow = scr.ids.world_drop
+        except Exception:
+            return
+        if not self._menu_world:
+            # ainda não carregou
+            try:
+                self._bosses_refresh_worlds()
+            except Exception:
+                pass
+            return
+        try:
+            w = min((field.width + arrow.width) if field.width else (Window.width - dp(32)), Window.width - dp(32))
+            self._menu_world.caller = field
+            self._menu_world.width = w
+        except Exception:
+            pass
+        try:
+            self._menu_world.open()
+        except Exception:
+            pass
+
 
     def _select_world(self, world: str):
         scr = self.root.get_screen("bosses")
