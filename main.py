@@ -8,6 +8,7 @@ Mais -> telas internas: Bosses (ExevoPan), Boosted, Treino (Exercise), Imbuement
 from __future__ import annotations
 
 import os
+import sys
 import json
 import re
 import threading
@@ -73,6 +74,63 @@ except Exception:
 KV_FILE = "tibia_tools.kv"
 
 
+# --------------------
+# Crash logging (Android-friendly)
+# --------------------
+def _try_get_writable_dir() -> str:
+    # Prefer android app storage; fallback to user_data_dir when app exists.
+    try:
+        from android.storage import app_storage_path  # type: ignore
+        p = app_storage_path()
+        if p:
+            os.makedirs(p, exist_ok=True)
+            return p
+    except Exception:
+        pass
+    # best-effort fallback
+    try:
+        from kivy.app import App
+        app = App.get_running_app()
+        if app and getattr(app, "user_data_dir", None):
+            p = str(app.user_data_dir)
+            os.makedirs(p, exist_ok=True)
+            return p
+    except Exception:
+        pass
+    return os.getcwd()
+
+_CRASH_FILE_NAME = "tibia_tools_crash.log"
+
+def _write_crash_log(text: str) -> None:
+    try:
+        # tenta sempre recalcular um diretório gravável
+        crash_dir = _try_get_writable_dir()
+        os.makedirs(crash_dir, exist_ok=True)
+        crash_file = os.path.join(crash_dir, _CRASH_FILE_NAME)
+        with open(crash_file, "a", encoding="utf-8") as f:
+            f.write(text)
+            if not text.endswith("\n"):
+                f.write("\n")
+    except Exception:
+        pass
+
+def _excepthook(exc_type, exc, tb):
+    try:
+        _write_crash_log("".join(traceback.format_exception(exc_type, exc, tb)))
+    finally:
+        # keep default behavior (logcat will show it too)
+        try:
+            sys.__excepthook__(exc_type, exc, tb)
+        except Exception:
+            pass
+
+try:
+    sys.excepthook = _excepthook
+except Exception:
+    pass
+
+
+
 class RootSM(ScreenManager):
     pass
 
@@ -93,8 +151,48 @@ class TibiaToolsApp(MDApp):
         super().__init__(**kwargs)
         self.favorites: List[str] = []
 
-        self.data_dir = get_data_dir() if _CORE_IMPORT_ERROR is None else os.getcwd()
-        os.makedirs(self.data_dir, exist_ok=True)
+        # data dir (writable) – evita crash quando fallback cai em pasta sem permissão no Android
+        self.data_dir = ""
+        if _CORE_IMPORT_ERROR is None:
+            try:
+                self.data_dir = str(get_data_dir() or "")
+            except Exception:
+                self.data_dir = ""
+
+        if not self.data_dir:
+            # user_data_dir é o caminho mais confiável no Android
+            try:
+                self.data_dir = str(getattr(self, "user_data_dir", "") or "")
+            except Exception:
+                self.data_dir = ""
+
+        if not self.data_dir:
+            self.data_dir = os.getcwd()
+
+        def _ensure_writable_dir(p: str) -> str:
+            try:
+                os.makedirs(p, exist_ok=True)
+                test_path = os.path.join(p, ".tt_write_test")
+                with open(test_path, "w", encoding="utf-8") as f:
+                    f.write("ok")
+                try:
+                    os.remove(test_path)
+                except Exception:
+                    pass
+                return p
+            except Exception:
+                return ""
+
+        ok_dir = _ensure_writable_dir(self.data_dir)
+        if not ok_dir:
+            try:
+                ok_dir = _ensure_writable_dir(str(getattr(self, "user_data_dir", "") or ""))
+            except Exception:
+                ok_dir = ""
+        if not ok_dir:
+            ok_dir = os.getcwd()
+        self.data_dir = ok_dir
+
         self.fav_path = os.path.join(self.data_dir, "favorites.json")
         self.prefs_path = os.path.join(self.data_dir, "prefs.json")
         self.cache_path = os.path.join(self.data_dir, "cache.json")
@@ -104,7 +202,6 @@ class TibiaToolsApp(MDApp):
         self._menu_boss_filter = None
         self._menu_boss_sort = None
         self._menu_imb_tier = None
-
 
         self._menu_world: Optional[MDDropdownMenu] = None
         self._menu_skill: Optional[MDDropdownMenu] = None
@@ -124,6 +221,8 @@ class TibiaToolsApp(MDApp):
         self._fav_refresh_event = None
 
     def build(self):
+
+
         self.title = "Tibia Tools"
         self.theme_cls.primary_palette = "Blue"
         self.theme_cls.theme_style = "Dark"
@@ -161,21 +260,39 @@ class TibiaToolsApp(MDApp):
         if kv_ok and isinstance(root, ScreenManager):
             self.load_favorites()
             self._load_prefs_cache()
-            Clock.schedule_once(lambda *_: self._apply_settings_to_ui(), 0)
-            Clock.schedule_once(lambda *_: self._maybe_start_fav_monitor_service(), 0.2)
-            Clock.schedule_once(lambda *_: self._set_initial_home_tab(), 0)
-            Clock.schedule_once(lambda *_: self.dashboard_refresh(), 0)
+            Clock.schedule_once(lambda *_: self._safe_call(self._apply_settings_to_ui), 0)
+            Clock.schedule_once(lambda *_: self._safe_call(self._maybe_start_fav_monitor_service), 0.2)
+            Clock.schedule_once(lambda *_: self._safe_call(self._set_initial_home_tab), 0)
+            Clock.schedule_once(lambda *_: self._safe_call(self.dashboard_refresh), 0)
 
-            Clock.schedule_once(lambda *_: self.refresh_favorites_list(silent=True), 0)
+            Clock.schedule_once(lambda *_: self._safe_call(self.refresh_favorites_list, silent=True), 0)
             # Auto-atualização do status dos favoritos (não faz sentido ficar "travado")
             if self._fav_refresh_event is None:
                 self._fav_refresh_event = Clock.schedule_interval(
-                    lambda dt: self.refresh_favorites_list(silent=True),
+                    lambda dt: self._safe_call(self.refresh_favorites_list, silent=True),
                     30,
                 )
-            Clock.schedule_once(lambda *_: self.update_boosted(), 0)
+            Clock.schedule_once(lambda *_: self._safe_call(self.update_boosted), 0)
 
         return root
+
+    def _safe_call(self, fn, *args, **kwargs):
+        """Executa fn e captura exceções, evitando fechar o app no Android."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception:
+            _write_crash_log(traceback.format_exc())
+            # tenta mostrar uma mensagem simples na UI (sem quebrar se KV falhou)
+            try:
+                dlg = MDDialog(
+                    title="Erro",
+                    text="Ocorreu um erro e foi gravado em tibia_tools_crash.log.\nAbra o app novamente e me envie esse log.",
+                    buttons=[MDFlatButton(text="OK", on_release=lambda *_: dlg.dismiss())],
+                )
+                dlg.open()
+            except Exception:
+                pass
+            return None
 
     # --------------------
     # Deep-link / Notification click handling (Android)
@@ -3739,4 +3856,8 @@ class TibiaToolsApp(MDApp):
 
 
 if __name__ == "__main__":
-    TibiaToolsApp().run()
+    try:
+        TibiaToolsApp().run()
+    except Exception:
+        _write_crash_log(traceback.format_exc())
+        raise
