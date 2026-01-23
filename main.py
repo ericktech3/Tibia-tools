@@ -261,7 +261,7 @@ class TibiaToolsApp(MDApp):
             self.load_favorites()
             self._load_prefs_cache()
             Clock.schedule_once(lambda *_: self._safe_call(self._apply_settings_to_ui), 0)
-            Clock.schedule_once(lambda *_: self._safe_call(self._maybe_start_fav_monitor_service), 0.2)
+            # (disabled) background monitor service auto-start for stability
             Clock.schedule_once(lambda *_: self._safe_call(self._set_initial_home_tab), 0)
             Clock.schedule_once(lambda *_: self._safe_call(self.dashboard_refresh), 0)
 
@@ -396,36 +396,10 @@ class TibiaToolsApp(MDApp):
     # --------------------
 
     def on_start(self):
-        """Android 13+ (SDK 33+) pode exigir permissão de notificação.
-
-        Em vários devices, o helper `android.permissions` não dispara o popup e/ou falha silenciosamente.
-        Aqui fazemos o check + request via Activity.requestPermissions (JNI), e re-tentamos com throttle.
-        """
-        # Deep-link de notificação: processa logo no start (após o KV estar pronto)
+        # Startup: handle deep-link intents (if any).
+        # Notification permissions/background service are disabled for stability.
         try:
-            Clock.schedule_once(lambda *_: self._handle_android_intent(), 1.0)
-        except Exception:
-            pass
-
-        try:
-            if not self._is_android():
-                return
-            if self._android_sdk_int() < 33:
-                return
-            # throttle para evitar spam caso o usuário negue
-            now = int(time.time())
-            last = int(self._prefs_get("post_notif_last_req_ts", 0) or 0)
-            if now - last < 60:
-                return
-            # Se já está concedido, ainda precisamos checar se o usuário bloqueou o app/canal.
-            if self._post_notif_permission_granted():
-                if (not self._notifications_globally_enabled()) or (not self._channel_enabled("tibia_tools_watch_fg")):
-                    # aqui não existe popup, só Configurações
-                    Clock.schedule_once(lambda *_: self._prompt_enable_notifications_dialog(), 0.2)
-                return
-            self._prefs_set("post_notif_last_req_ts", now)
-            from kivy.clock import Clock
-            Clock.schedule_once(lambda *_: self._ensure_post_notifications_permission(auto_open_settings=False), 0.8)
+            Clock.schedule_once(lambda *_: self._handle_android_intent(), 0.6)
         except Exception:
             pass
 
@@ -852,59 +826,16 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
     def _start_fav_monitor_service(self):
-        if not self._is_android():
-            return
-
-        def _do_start():
-            try:
-                from jnius import autoclass  # type: ignore
-                PythonActivity = autoclass("org.kivy.android.PythonActivity")
-                PythonService = autoclass("org.kivy.android.PythonService")
-                mActivity = PythonActivity.mActivity
-                # Inicia o serviço (foreground notification será ajustada dentro do service/main.py)
-                PythonService.start(mActivity, "Tibia Tools", "Monitorando favoritos")
-                return
-            except Exception:
-                # Fallback (older API)
-                try:
-                    from android import AndroidService  # type: ignore
-                    s = AndroidService("Tibia Tools", "Monitorando favoritos")
-                    s.start("start")
-                except Exception:
-                    pass
-
-        # Android 13+: só inicia depois da permissão
-        ok = self._ensure_post_notifications_permission(on_result=lambda granted: _do_start() if granted else None, auto_open_settings=True)
-        if ok:
-            _do_start()
-
+        # disabled (background service removed for stability)
+        return
 
     def _stop_fav_monitor_service(self):
-        if not self._is_android():
-            return
-        try:
-            from jnius import autoclass  # type: ignore
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            PythonService = autoclass("org.kivy.android.PythonService")
-            mActivity = PythonActivity.mActivity
-            PythonService.stop(mActivity)
-        except Exception:
-            try:
-                from android import AndroidService  # type: ignore
-                s = AndroidService("Tibia Tools", "Monitorando favoritos")
-                s.stop()
-            except Exception:
-                pass
+        # disabled (background service removed for stability)
+        return
 
     def _maybe_start_fav_monitor_service(self):
-        if not self._is_android():
-            return
-        try:
-            st = fav_state.load_state(self.data_dir)
-            if bool(st.get("monitoring", True)):
-                self._start_fav_monitor_service()
-        except Exception:
-            pass
+        # disabled (background service removed for stability)
+        return
 
     def _sync_bg_monitor_state_from_ui(self):
         """Save background-monitor settings into favorites.json (shared with the service)."""
@@ -935,11 +866,8 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
-        # start/stop service immediately
-        if monitoring:
-            self._start_fav_monitor_service()
-        else:
-            self._stop_fav_monitor_service()
+        # service disabled
+        return
 
     def dashboard_refresh(self, *_):
         """Atualiza o resumo do Dashboard usando cache e, se possível, dados ao vivo."""
