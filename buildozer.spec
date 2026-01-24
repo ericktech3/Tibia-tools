@@ -16,8 +16,8 @@ title = Tibia Tools
 #   (B) replace assets/presplash.png with a small 512x512 power-of-two image
 #       (Buildozer recommends power-of-two sizes for pre-splash images)
 #
-# presplash.filename = assets/presplash.png
-# android.presplash_color = #000000
+presplash.filename = assets/presplash.png
+android.presplash_color = 000000
 icon.filename = assets/icon.png
 package.name = tibiatools
 
