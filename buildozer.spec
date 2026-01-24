@@ -4,8 +4,20 @@
 title = Tibia Tools
 
 # (str) Package name
-presplash.filename = assets/presplash.png
-android.presplash_color = #000000
+# Splash screen (pre-splash)
+#
+# If the app is crashing immediately on some Android 14/15 devices with:
+#   FORTIFY: pthread_mutex_lock called on a destroyed mutex
+# and the crash thread name is `hwuiTask0/1` (Android UI renderer),
+# a common workaround is to DISABLE the pre-splash (it uses HWUI to render).
+#
+# Try one of these options:
+#   (A) disable the pre-splash entirely (comment the two lines below)
+#   (B) replace assets/presplash.png with a small 512x512 power-of-two image
+#       (Buildozer recommends power-of-two sizes for pre-splash images)
+#
+# presplash.filename = assets/presplash.png
+# android.presplash_color = #000000
 icon.filename = assets/icon.png
 package.name = tibiatools
 
@@ -44,6 +56,12 @@ android.minapi = 24
 android.activity_attributes = android:windowSoftInputMode="adjustResize"
 android.ndk = 25b
 android.archs = arm64-v8a,armeabi-v7a
+
+# Use a newer python-for-android (p4a) checkout when building.
+# This can help with device/OS-specific native crashes on newer Android versions.
+# If it causes build issues in your environment, remove these 2 lines.
+p4a.branch = master
+# p4a.commit = <optional specific commit SHA>
 
 # Permissões mínimas (INTERNET é essencial se você busca dados online)
 android.permissions = INTERNET
