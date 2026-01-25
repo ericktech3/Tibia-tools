@@ -395,10 +395,15 @@ class TibiaToolsApp(MDApp):
     # --------------------
 
     def on_start(self):
-        # Startup: handle deep-link intents (if any).
-        # Notification permissions/background service are disabled for stability.
+        # Startup: handle deep-link intents (if any) + request notification permission (Android 13+).
         try:
             Clock.schedule_once(lambda *_: self._handle_android_intent(), 0.6)
+        except Exception:
+            pass
+
+        # Ask once on first run (Android 13+ requires POST_NOTIFICATIONS).
+        try:
+            Clock.schedule_once(lambda *_: self._ensure_post_notifications_permission(), 0.9)
         except Exception:
             pass
 
@@ -3203,9 +3208,27 @@ class TibiaToolsApp(MDApp):
             field = scr.ids.world_field
             arrow = scr.ids.world_drop
             w = min((field.width + arrow.width) if field.width else ((self.root.width if getattr(self, 'root', None) else 360) - dp(32)), (self.root.width if getattr(self, 'root', None) else 360) - dp(32))
-            self._menu_world = MDDropdownMenu(caller=field, items=items, width_mult=1, max_height=dp(360))
+            
+            row = getattr(screen.ids, "world_row", None)
+            caller = row or field
+
+            base_w = getattr(caller, "width", 0) or field.width
+            base_w = max(dp(240), base_w)
+            max_h = min(dp(360), max(dp(160), self.root.height - dp(260)))
+
+            self._menu_world = MDDropdownMenu(
+                caller=caller,
+                items=items,
+                width=base_w,
+                max_height=max_h,
+                position="auto",
+            )
+            # Avoid negative X on some centered layouts.
             try:
-                self._menu_world.width = w
+                if hasattr(self._menu_world, "hor_growth"):
+                    self._menu_world.hor_growth = "right"
+                if hasattr(self._menu_world, "ver_growth"):
+                    self._menu_world.ver_growth = "down"
             except Exception:
                 pass
 
@@ -3221,31 +3244,44 @@ class TibiaToolsApp(MDApp):
 
 
     def open_world_menu(self):
-        """Abre o menu de Worlds ancorado no campo (corrige menu 'fora' da tela)."""
+        # Open the World dropdown and keep it inside screen bounds.
         try:
-            scr = self.root.get_screen("bosses")
-            field = scr.ids.world_field
-            arrow = scr.ids.world_drop
-        except Exception:
-            return
-        if not self._menu_world:
-            # ainda não carregou
+            from kivy.metrics import dp
+
+            screen = self.root.get_screen("bosses")
+            field = getattr(screen.ids, "boss_world", None)
+            row = getattr(screen.ids, "world_row", None)
+            caller = row or field
+            if not self._menu_world or not caller:
+                return
+
+            # Width: prefer the full row width (field + arrow), clamped to screen.
+            w = getattr(caller, "width", 0) or 0
+            if w <= 1 and field is not None:
+                w = field.width
+            w = max(dp(240), min(w, self.root.width - dp(32)))
+
+            # Height: avoid going behind bottom bar.
+            max_h = min(dp(360), max(dp(160), self.root.height - dp(260)))
+
             try:
-                self._bosses_refresh_worlds()
+                self._menu_world.caller = caller
+                self._menu_world.width = w
+                self._menu_world.max_height = max_h
+
+                # Force growth to the right to avoid negative X on some layouts.
+                if hasattr(self._menu_world, "hor_growth"):
+                    self._menu_world.hor_growth = "right"
+                if hasattr(self._menu_world, "ver_growth"):
+                    self._menu_world.ver_growth = "down"
+                if hasattr(self._menu_world, "position"):
+                    self._menu_world.position = "auto"
             except Exception:
                 pass
-            return
-        try:
-            w = min((field.width + arrow.width) if field.width else ((self.root.width if getattr(self, 'root', None) else 360) - dp(32)), (self.root.width if getattr(self, 'root', None) else 360) - dp(32))
-            self._menu_world.caller = field
-            self._menu_world.width = w
-        except Exception:
-            pass
-        try:
+
             self._menu_world.open()
         except Exception:
             pass
-
 
     def _select_world(self, world: str):
         scr = self.root.get_screen("bosses")

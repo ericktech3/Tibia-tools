@@ -65,7 +65,7 @@ p4a.branch = master
 # p4a.commit = <optional specific commit SHA>
 
 # Permissões mínimas (INTERNET é essencial se você busca dados online)
-android.permissions = INTERNET
+android.permissions = INTERNET, POST_NOTIFICATIONS
 # android.foreground_service_type disabled
 
 # ✅ evita prompt interativo de licença no GitHub Actions
