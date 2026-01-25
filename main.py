@@ -23,7 +23,6 @@ from urllib.parse import quote
 from typing import List, Optional
 
 from kivy.core.clipboard import Clipboard
-from kivy.core.window import Window
 from kivy.lang import Builder
 from kivy.resources import resource_find
 from kivy.clock import Clock
@@ -3203,7 +3202,7 @@ class TibiaToolsApp(MDApp):
             # menu de worlds: ancorado no campo (evita abrir 'fora' da tela)
             field = scr.ids.world_field
             arrow = scr.ids.world_drop
-            w = min((field.width + arrow.width) if field.width else (Window.width - dp(32)), Window.width - dp(32))
+            w = min((field.width + arrow.width) if field.width else ((self.root.width if getattr(self, 'root', None) else 360) - dp(32)), (self.root.width if getattr(self, 'root', None) else 360) - dp(32))
             self._menu_world = MDDropdownMenu(caller=field, items=items, width_mult=1, max_height=dp(360))
             try:
                 self._menu_world.width = w
@@ -3237,7 +3236,7 @@ class TibiaToolsApp(MDApp):
                 pass
             return
         try:
-            w = min((field.width + arrow.width) if field.width else (Window.width - dp(32)), Window.width - dp(32))
+            w = min((field.width + arrow.width) if field.width else ((self.root.width if getattr(self, 'root', None) else 360) - dp(32)), (self.root.width if getattr(self, 'root', None) else 360) - dp(32))
             self._menu_world.caller = field
             self._menu_world.width = w
         except Exception:

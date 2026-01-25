@@ -16,9 +16,10 @@ title = Tibia Tools
 #   (B) replace assets/presplash.png with a small 512x512 power-of-two image
 #       (Buildozer recommends power-of-two sizes for pre-splash images)
 #
-presplash.filename = assets/presplash.png
-android.presplash_color = 000000
+# android.presplash_color = #000000
 icon.filename = assets/icon.png
+presplash.color = #222222
+presplash.filename = %(source.dir)s/assets/presplash.png
 package.name = tibiatools
 
 # (str) Package domain (needed for android/ios packaging)
@@ -41,7 +42,7 @@ version = 0.1.0
 # ✅ trava o KivyMD na versão compatível com MDBottomNavigation etc.
 # ✅ fixa versões estáveis pra evitar quebra no GitHub Actions/p4a
 #    (no log: Kivy 2.3.0 falhou ao compilar no armeabi-v7a por falta dos .c gerados)
-requirements = python3==3.10.14,kivy==2.2.1,kivymd==1.2.0,requests,urllib3,idna,charset-normalizer,chardet,certifi,beautifulsoup4,soupsieve,typing_extensions,pillow
+requirements = python3,kivy,kivymd==1.2.0,requests,urllib3,idna,charset-normalizer,chardet,certifi,beautifulsoup4,soupsieve,typing_extensions,pillow
 
 # (str) Supported orientation (one of landscape, portrait or all)
 orientation = portrait
