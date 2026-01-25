@@ -3193,45 +3193,69 @@ class TibiaToolsApp(MDApp):
             return sorted([w.get("name") for w in data.get("worlds", {}).get("regular_worlds", []) if w.get("name")])
 
         def done(worlds):
-            scr.ids.boss_status.text = f"Worlds: {len(worlds)}"
-            # restaura último world
+            """Update Bosses world list/menu on the main thread.
+
+            Defensive: exceptions here can hard-crash some Android/Kivy builds.
+            """
             try:
-                last = str(self._prefs_get("boss_last_world", "") or "").strip()
-                if last:
-                    scr.ids.world_field.text = last
+                if worlds is None:
+                    worlds = []
+                elif not isinstance(worlds, (list, tuple)):
+                    try:
+                        worlds = list(worlds)
+                    except Exception:
+                        worlds = []
+
+                if "boss_status" in scr.ids:
+                    scr.ids.boss_status.text = f"Worlds: {len(worlds)}"
+
+                # Restore last selected world (if field exists)
+                field = getattr(scr.ids, "world_field", None)
+                try:
+                    last = str(self._prefs_get("boss_last_world", "") or "").strip()
+                    if field is not None and last:
+                        field.text = last
+                except Exception:
+                    pass
+
+                arrow = getattr(scr.ids, "world_drop", None)
+                row = getattr(scr.ids, "world_row", None)
+                caller = row or field
+                if caller is None:
+                    return
+
+                # Build dropdown items (cap to avoid very tall/heavy menus)
+                items = [
+                    {"text": w, "on_release": (lambda x=w: self._select_world(x))}
+                    for w in (worlds or [])[:400]
+                ]
+
+                # Recreate menu safely
+                if getattr(self, "_menu_world", None):
+                    try:
+                        self._menu_world.dismiss()
+                    except Exception:
+                        pass
+
+                from kivymd.uix.menu import MDDropdownMenu
+                from kivy.metrics import dp
+
+                base_w = getattr(caller, "width", 0) or dp(280)
+                menu_w = max(dp(220), min(dp(360), base_w))
+
+                self._menu_world = MDDropdownMenu(
+                    caller=caller,
+                    items=items,
+                    width=menu_w,
+                    max_height=dp(420),
+                )
+
             except Exception:
-                pass
-            items = [{"text": w, "on_release": (lambda x=w: self._select_world(x))} for w in worlds[:400]]
-            if self._menu_world:
-                self._menu_world.dismiss()
-            # menu de worlds: ancorado no campo (evita abrir 'fora' da tela)
-            field = scr.ids.world_field
-            arrow = scr.ids.world_drop
-            w = min((field.width + arrow.width) if field.width else ((self.root.width if getattr(self, 'root', None) else 360) - dp(32)), (self.root.width if getattr(self, 'root', None) else 360) - dp(32))
-            
-            row = getattr(screen.ids, "world_row", None)
-            caller = row or field
-
-            base_w = getattr(caller, "width", 0) or field.width
-            base_w = max(dp(240), base_w)
-            max_h = min(dp(360), max(dp(160), self.root.height - dp(260)))
-
-            self._menu_world = MDDropdownMenu(
-                caller=caller,
-                items=items,
-                width=base_w,
-                max_height=max_h,
-                position="auto",
-            )
-            # Avoid negative X on some centered layouts.
-            try:
-                if hasattr(self._menu_world, "hor_growth"):
-                    self._menu_world.hor_growth = "right"
-                if hasattr(self._menu_world, "ver_growth"):
-                    self._menu_world.ver_growth = "down"
-            except Exception:
-                pass
-
+                try:
+                    from kivy.logger import Logger
+                    Logger.exception("Bosses: failed to build worlds menu")
+                except Exception:
+                    pass
         def run():
             try:
                 worlds = worker()
