@@ -3209,7 +3209,7 @@ class TibiaToolsApp(MDApp):
             arrow = scr.ids.world_drop
             w = min((field.width + arrow.width) if field.width else ((self.root.width if getattr(self, 'root', None) else 360) - dp(32)), (self.root.width if getattr(self, 'root', None) else 360) - dp(32))
             
-            row = getattr(scr.ids, "world_row", None)
+            row = getattr(screen.ids, "world_row", None)
             caller = row or field
 
             base_w = getattr(caller, "width", 0) or field.width
@@ -3250,7 +3250,7 @@ class TibiaToolsApp(MDApp):
 
             screen = self.root.get_screen("bosses")
             field = getattr(screen.ids, "world_field", None)
-            row = getattr(scr.ids, "world_row", None)
+            row = getattr(screen.ids, "world_row", None)
             caller = row or field
             if not self._menu_world or not caller:
                 return
