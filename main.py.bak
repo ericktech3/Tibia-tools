@@ -3220,7 +3220,7 @@ class TibiaToolsApp(MDApp):
 
                 arrow = getattr(scr.ids, "world_drop", None)
                 row = getattr(scr.ids, "world_row", None)
-                caller = row or field or arrow
+                caller = row or field
                 if caller is None:
                     return
 
@@ -3243,33 +3243,12 @@ class TibiaToolsApp(MDApp):
                 base_w = getattr(caller, "width", 0) or dp(280)
                 menu_w = max(dp(220), min(dp(360), base_w))
 
-                # Build the dropdown menu. Some KivyMD builds differ in supported kwargs,
-                # so we try the more complete config first and fall back if needed.
-                try:
-                    self._menu_world = MDDropdownMenu(
-                        caller=caller,
-                        items=items,
-                        width=menu_w,
-                        max_height=dp(420),
-                        position="auto",
-                        border_margin=dp(12),
-                    )
-                except TypeError:
-                    self._menu_world = MDDropdownMenu(
-                        caller=caller,
-                        items=items,
-                        width=menu_w,
-                        max_height=dp(420),
-                    )
-
-                # Extra safety: force the menu to grow inside the screen when supported.
-                try:
-                    if hasattr(self._menu_world, "hor_growth"):
-                        self._menu_world.hor_growth = "right"
-                    if hasattr(self._menu_world, "ver_growth"):
-                        self._menu_world.ver_growth = "down"
-                except Exception:
-                    pass
+                self._menu_world = MDDropdownMenu(
+                    caller=caller,
+                    items=items,
+                    width=menu_w,
+                    max_height=dp(420),
+                )
 
             except Exception:
                 try:
@@ -3295,9 +3274,8 @@ class TibiaToolsApp(MDApp):
 
             screen = self.root.get_screen("bosses")
             field = getattr(screen.ids, "world_field", None)
-            arrow = getattr(screen.ids, "world_drop", None)
             row = getattr(screen.ids, "world_row", None)
-            caller = row or field or arrow
+            caller = row or field
             if not self._menu_world or not caller:
                 return
 
@@ -3315,13 +3293,6 @@ class TibiaToolsApp(MDApp):
                 self._menu_world.width = w
                 self._menu_world.max_height = max_h
 
-                # Keep a margin from the screen edges.
-                try:
-                    if hasattr(self._menu_world, "border_margin"):
-                        self._menu_world.border_margin = dp(12)
-                except Exception:
-                    pass
-
                 # Force growth to the right to avoid negative X on some layouts.
                 if hasattr(self._menu_world, "hor_growth"):
                     self._menu_world.hor_growth = "right"
@@ -3333,37 +3304,6 @@ class TibiaToolsApp(MDApp):
                 pass
 
             self._menu_world.open()
-
-            # Final safety clamp (some Android devices ignore border_margin/hor_growth).
-            try:
-                from kivy.core.window import Window
-                from kivy.clock import Clock
-
-                def _clamp_menu_pos(*_a):
-                    try:
-                        margin = dp(8)
-                        target = None
-                        # KivyMD may expose the visible container as `menu`.
-                        if hasattr(self._menu_world, "menu"):
-                            target = self._menu_world.menu
-                        elif hasattr(self._menu_world, "_menu"):
-                            target = self._menu_world._menu
-                        else:
-                            target = self._menu_world
-
-                        if not hasattr(target, "x") or not hasattr(target, "width"):
-                            return
-                        # Clamp X inside the window.
-                        max_x = Window.width - target.width - margin
-                        if max_x < margin:
-                            return
-                        target.x = max(margin, min(target.x, max_x))
-                    except Exception:
-                        pass
-
-                Clock.schedule_once(_clamp_menu_pos, 0)
-            except Exception:
-                pass
         except Exception:
             pass
 
