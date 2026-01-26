@@ -150,6 +150,9 @@ class TibiaToolsApp(MDApp):
         super().__init__(**kwargs)
         self.favorites: List[str] = []
 
+        # Android background service handle (favorites monitor)
+        self._bg_service = None
+
         # data dir (writable) – evita crash quando fallback cai em pasta sem permissão no Android
         self.data_dir = ""
         if _CORE_IMPORT_ERROR is None:
@@ -407,10 +410,23 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
+        # Start/stop background monitor according to current settings.
+        # (Needs to run after the initial permission check on Android 13+.)
+        try:
+            Clock.schedule_once(lambda *_: self._safe_call(self._maybe_start_fav_monitor_service), 1.6)
+        except Exception:
+            pass
+
     def on_resume(self):
         # Quando o usuário toca na notificação com o app em background, isso garante o deep-link.
         try:
             Clock.schedule_once(lambda *_: self._handle_android_intent(), 0.2)
+        except Exception:
+            pass
+
+        # Reconfere o estado do serviço ao voltar (alguns OEMs podem matar o processo do serviço).
+        try:
+            Clock.schedule_once(lambda *_: self._safe_call(self._maybe_start_fav_monitor_service), 0.8)
         except Exception:
             pass
 
@@ -725,7 +741,7 @@ class TibiaToolsApp(MDApp):
         # 1) check robusto
         if self._post_notif_permission_granted():
             # Mesmo com permissão, o usuário pode ter bloqueado notificações do app/canal.
-            if (not self._notifications_globally_enabled()) or (not self._channel_enabled("tibia_tools_watch_fg")):
+            if (not self._notifications_globally_enabled()) or (not self._channel_enabled("tibia_tools_watch_fg")) or (not self._channel_enabled("tibia_tools_events")):
                 try:
                     self.toast("Notificações desativadas no sistema")
                 except Exception:
@@ -829,17 +845,70 @@ class TibiaToolsApp(MDApp):
             activity.startActivity(intent)
         except Exception:
             pass
+
+    # --------------------
+    # Background service (Favorites monitor)
+    # --------------------
     def _start_fav_monitor_service(self):
-        # disabled (background service removed for stability)
-        return
+        """Inicia o serviço em segundo plano (na prática: foreground service).
+
+        Ele é o responsável por enviar notificações de ONLINE / MORTE / LEVEL UP
+        mesmo com o app fechado.
+        """
+        if not self._is_android():
+            return
+
+        # Em Android 13+ precisamos de POST_NOTIFICATIONS; sem isso o serviço pode
+        # falhar ao postar a notificação fixa do foreground.
+        if self._android_sdk_int() >= 33:
+            ok = self._ensure_post_notifications_permission(auto_open_settings=False)
+            if not ok:
+                # Deixa o usuário decidir; não inicia para evitar crash/silêncio.
+                try:
+                    self._prompt_enable_notifications_dialog()
+                except Exception:
+                    pass
+                return
+
+        try:
+            from android import AndroidService  # type: ignore
+
+            if self._bg_service is None:
+                # O texto aqui é só o "ticker"; o serviço em si chama startForeground com texto próprio.
+                self._bg_service = AndroidService("Tibia Tools", "Monitorando favoritos")
+
+            # Chamar start várias vezes é OK (idempotente na maioria dos devices)
+            self._bg_service.start("favwatch")
+        except Exception:
+            # último recurso: não quebrar o app
+            _write_crash_log(traceback.format_exc())
 
     def _stop_fav_monitor_service(self):
-        # disabled (background service removed for stability)
-        return
+        if not self._is_android():
+            return
+        try:
+            if self._bg_service is not None:
+                self._bg_service.stop()
+                self._bg_service = None
+        except Exception:
+            _write_crash_log(traceback.format_exc())
 
     def _maybe_start_fav_monitor_service(self):
-        # disabled (background service removed for stability)
-        return
+        """Liga/desliga o serviço conforme Configurações + favoritos."""
+        if not self._is_android():
+            return
+        try:
+            st = fav_state.load_state(self.data_dir)
+            monitoring = bool(st.get("monitoring", True))
+            favs = st.get("favorites", [])
+            has_favs = isinstance(favs, list) and any(str(x).strip() for x in favs)
+
+            if monitoring and has_favs:
+                self._start_fav_monitor_service()
+            else:
+                self._stop_fav_monitor_service()
+        except Exception:
+            _write_crash_log(traceback.format_exc())
 
     def _sync_bg_monitor_state_from_ui(self):
         """Save background-monitor settings into favorites.json (shared with the service)."""
@@ -870,8 +939,11 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
-        # service disabled
-        return
+        # aplica o estado imediatamente
+        try:
+            self._maybe_start_fav_monitor_service()
+        except Exception:
+            pass
 
     def dashboard_refresh(self, *_):
         """Atualiza o resumo do Dashboard usando cache e, se possível, dados ao vivo."""
@@ -2266,6 +2338,11 @@ class TibiaToolsApp(MDApp):
             self.favorites.append(name)
             self.favorites.sort(key=lambda s: s.lower())
             self.save_favorites()
+            # mantém serviço em sync
+            try:
+                self._maybe_start_fav_monitor_service()
+            except Exception:
+                pass
             self.refresh_favorites_list()
             self.toast("Adicionado aos favoritos.")
         else:
@@ -2578,6 +2655,11 @@ class TibiaToolsApp(MDApp):
 
             if len(self.favorites) != before:
                 self.save_favorites()
+                # mantém serviço em sync
+                try:
+                    self._maybe_start_fav_monitor_service()
+                except Exception:
+                    pass
                 # limpa cache relacionado (opcional)
                 try:
                     self._cache_set(f"fav_status:{key}", None)
