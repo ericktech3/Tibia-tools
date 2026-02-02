@@ -1,0 +1,19 @@
+name: Limpar Builds Antigos
+
+on: 
+  workflow_dispatch: # Permite rodar manualmente clicando num botão
+
+jobs:
+  del_runs:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 0 # 0 significa apagar tudo
+          keep_minimum_runs: 0 # Não manter nenhum backup
