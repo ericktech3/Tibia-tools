@@ -222,6 +222,20 @@ class TibiaToolsApp(MDApp):
         self._fav_status_job_id = 0
         self._fav_refresh_event = None
 
+        # Disk I/O debounce (evita travadas por salvar JSON a cada update)
+        self._prefs_lock = threading.Lock()
+        self._cache_lock = threading.Lock()
+        self._prefs_dirty = False
+        self._cache_dirty = False
+        self._disk_event = threading.Event()
+        self._disk_stop = threading.Event()
+        self._disk_thread = threading.Thread(target=self._disk_worker_loop, daemon=True)
+        self._disk_thread.start()
+
+        # Evita rebuild completo da lista de favoritos a cada refresh
+        self._fav_rendered_signature = None
+        self._fav_refreshing = False
+
     def build(self):
 
 
@@ -295,6 +309,35 @@ class TibiaToolsApp(MDApp):
             except Exception:
                 pass
             return None
+
+    def on_pause(self):
+        """Android: ao ir para o background, força flush de prefs/cache.
+
+        Isso ajuda a não perder dados caso o sistema mate o processo.
+        """
+        try:
+            self._flush_prefs_to_disk(force=True)
+            self._flush_cache_to_disk(force=True)
+        except Exception:
+            pass
+        return True
+
+    def on_stop(self):
+        """Flush final e encerra o worker de disco."""
+        try:
+            try:
+                self._disk_stop.set()
+            except Exception:
+                pass
+            try:
+                self._disk_event.set()
+            except Exception:
+                pass
+            # flush final
+            self._flush_prefs_to_disk(force=True)
+            self._flush_cache_to_disk(force=True)
+        except Exception:
+            pass
 
     # --------------------
     # Deep-link / Notification click handling (Android)
@@ -1157,20 +1200,121 @@ class TibiaToolsApp(MDApp):
             safe_write_json(self.fav_path, self.favorites)
 
     def _load_prefs_cache(self):
-        self.prefs = safe_read_json(self.prefs_path, default={}) or {}
-        if not isinstance(self.prefs, dict):
-            self.prefs = {}
-        self.cache = safe_read_json(self.cache_path, default={}) or {}
-        if not isinstance(self.cache, dict):
-            self.cache = {}
+        """Carrega prefs/cache do disco (1x) e mantém em memória."""
+        prefs = safe_read_json(self.prefs_path, default={}) or {}
+        if not isinstance(prefs, dict):
+            prefs = {}
+        cache = safe_read_json(self.cache_path, default={}) or {}
+        if not isinstance(cache, dict):
+            cache = {}
+
+        # Evita race com o worker de flush
+        try:
+            with self._prefs_lock:
+                self.prefs = prefs
+                self._prefs_dirty = False
+            with self._cache_lock:
+                self.cache = cache
+                self._cache_dirty = False
+        except Exception:
+            self.prefs = prefs
+            self.cache = cache
+
+    def _write_json_atomic(self, path: str, data, *, pretty: bool = False) -> bool:
+        """Escreve JSON de forma atômica (tmp + replace).
+
+        pretty=True  -> indentado (legível)
+        pretty=False -> compacto (mais rápido/menor)
+        """
+        try:
+            base = os.path.dirname(path) or "."
+            os.makedirs(base, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                if pretty:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                else:
+                    json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+            os.replace(tmp, path)
+            return True
+        except Exception:
+            return False
+
+    def _disk_worker_loop(self) -> None:
+        """Thread dedicado para flush de prefs/cache em disco, com debounce.
+
+        Isso evita travadas na UI quando o app atualiza muitos itens (ex: Favoritos)
+        e chamava json.dump a cada update.
+        """
+        while True:
+            try:
+                if getattr(self, "_disk_stop", None) is not None and self._disk_stop.is_set():
+                    break
+                # espera alguma alteração (ou timeout para permitir sair)
+                self._disk_event.wait(timeout=1.0)
+                if getattr(self, "_disk_stop", None) is not None and self._disk_stop.is_set():
+                    break
+
+                # debounce: coalesce bursts
+                time.sleep(0.4)
+                try:
+                    self._disk_event.clear()
+                except Exception:
+                    pass
+
+                self._flush_prefs_to_disk()
+                self._flush_cache_to_disk()
+            except Exception:
+                try:
+                    _write_crash_log(traceback.format_exc())
+                except Exception:
+                    pass
+
+    def _flush_prefs_to_disk(self, force: bool = False) -> None:
+        """Salva prefs.json se houver alterações."""
+        try:
+            with self._prefs_lock:
+                if (not force) and (not bool(getattr(self, "_prefs_dirty", False))):
+                    return
+                snapshot = dict(self.prefs) if isinstance(self.prefs, dict) else {}
+                self._prefs_dirty = False
+            ok = self._write_json_atomic(self.prefs_path, snapshot, pretty=True)
+            if not ok:
+                with self._prefs_lock:
+                    self._prefs_dirty = True
+        except Exception:
+            try:
+                with self._prefs_lock:
+                    self._prefs_dirty = True
+            except Exception:
+                pass
+
+    def _flush_cache_to_disk(self, force: bool = False) -> None:
+        """Salva cache.json se houver alterações (compacto, para ser rápido)."""
+        try:
+            with self._cache_lock:
+                if (not force) and (not bool(getattr(self, "_cache_dirty", False))):
+                    return
+                snapshot = dict(self.cache) if isinstance(self.cache, dict) else {}
+                self._cache_dirty = False
+            ok = self._write_json_atomic(self.cache_path, snapshot, pretty=False)
+            if not ok:
+                with self._cache_lock:
+                    self._cache_dirty = True
+        except Exception:
+            try:
+                with self._cache_lock:
+                    self._cache_dirty = True
+            except Exception:
+                pass
 
     def _save_prefs(self):
-        if isinstance(self.prefs, dict):
-            safe_write_json(self.prefs_path, self.prefs)
+        """Compat: salva imediatamente (evite chamar em hot paths)."""
+        self._flush_prefs_to_disk(force=True)
 
     def _save_cache(self):
-        if isinstance(self.cache, dict):
-            safe_write_json(self.cache_path, self.cache)
+        """Compat: salva imediatamente (evite chamar em hot paths)."""
+        self._flush_cache_to_disk(force=True)
 
     def _prefs_get(self, key: str, default=None):
         try:
@@ -1179,9 +1323,17 @@ class TibiaToolsApp(MDApp):
             return default
 
     def _prefs_set(self, key: str, value):
+        """Atualiza prefs em memória e agenda flush em background."""
         try:
-            self.prefs[key] = value
-            self._save_prefs()
+            with self._prefs_lock:
+                if not isinstance(self.prefs, dict):
+                    self.prefs = {}
+                self.prefs[key] = value
+                self._prefs_dirty = True
+            try:
+                self._disk_event.set()
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1208,20 +1360,31 @@ class TibiaToolsApp(MDApp):
             return None
 
     def _cache_set(self, key: str, value):
+        """Atualiza cache em memória e agenda flush em background."""
         try:
-            self.cache[key] = {"ts": datetime.utcnow().isoformat(), "value": value}
-            self._save_cache()
+            with self._cache_lock:
+                if not isinstance(self.cache, dict):
+                    self.cache = {}
+                self.cache[key] = {"ts": datetime.utcnow().isoformat(), "value": value}
+                self._cache_dirty = True
+            try:
+                self._disk_event.set()
+            except Exception:
+                pass
         except Exception:
             pass
 
     def _cache_clear(self):
         try:
-            self.cache = {}
-            self._save_cache()
+            with self._cache_lock:
+                self.cache = {}
+                self._cache_dirty = True
+            try:
+                self._disk_event.set()
+            except Exception:
+                pass
         except Exception:
             pass
-
-
 
     # --------------------
     # Offline duration helpers ("última vez online")
@@ -1979,7 +2142,7 @@ class TibiaToolsApp(MDApp):
                         it.add_widget(IconLeftWidget(icon="chart-line"))
                         xlist.add_widget(it)
                     else:
-                        for r in rows[:30]:
+                        for r in rows[:7]:
                             ds = str(r.get("date") or "").strip()
                             ev = r.get("exp_change_int")
                             try:
@@ -2137,7 +2300,14 @@ class TibiaToolsApp(MDApp):
                 exp_rows_30 = []
                 exp_total_30 = None
                 try:
-                    rows = fetch_guildstats_exp_changes(title or name)
+                    rows = self._cache_get(f"gs_exp_rows:{(title or name).strip().lower()}", ttl_seconds=10 * 60)
+                    if rows is None:
+                        rows = fetch_guildstats_exp_changes(title or name)
+                        try:
+                            self._cache_set(f"gs_exp_rows:{(title or name).strip().lower()}", rows or [])
+                        except Exception:
+                            pass
+
                     if rows:
                         dates = []
                         for r in rows:
@@ -2169,10 +2339,18 @@ class TibiaToolsApp(MDApp):
                 # 1) tenta GuildStats (fansite) por ordem (mais recente -> mais recente)
                 # 2) se falhar/bloquear, calcula a estimativa offline (igual GuildStats: promoted + 7 blessings)
                 xp_list = []
-                try:
-                    xp_list = fetch_guildstats_deaths_xp(title or name)
-                except Exception:
-                    xp_list = []
+                # Busca no cache primeiro (mortes mudam pouco; economiza parsing pesado)
+                if deaths:
+                    xp_list = self._cache_get(f"gs_death_xp:{(title or name).strip().lower()}", ttl_seconds=6 * 3600)
+                    if xp_list is None:
+                        try:
+                            xp_list = fetch_guildstats_deaths_xp(title or name)
+                        except Exception:
+                            xp_list = []
+                        try:
+                            self._cache_set(f"gs_death_xp:{(title or name).strip().lower()}", xp_list or [])
+                        except Exception:
+                            pass
 
                 if xp_list:
                     for i, d in enumerate(deaths):
@@ -2352,40 +2530,100 @@ class TibiaToolsApp(MDApp):
     # Favorites tab
     # --------------------
     def refresh_favorites_list(self, silent: bool = False, force: bool = False):
-        home = self.root.get_screen("home")
-        container = home.ids.fav_list
-        container.clear_widgets()
+        """Renderiza/atualiza a lista de Favoritos sem travar a UI.
 
-        # Each refresh spawns a new status job. Older jobs stop automatically.
-        self._fav_status_job_id += 1
-        job_id = self._fav_status_job_id
-        self._fav_items = {}
-
-        if not self.favorites:
-            item = OneLineIconListItem(text="Sem favoritos. Adicione no Char.")
-            item.add_widget(IconLeftWidget(icon="star-outline"))
-            container.add_widget(item)
+        Otimizações importantes:
+        - Evita `clear_widgets()` e rebuild completo a cada refresh silencioso.
+        - Evita iniciar múltiplos workers simultâneos (threads em cascata).
+        """
+        try:
+            home = self.root.get_screen("home")
+            container = home.ids.fav_list
+        except Exception:
             return
 
-        # Render quickly with cached status (if available), then refresh in background.
+        # Normaliza lista + gera assinatura (para saber se precisa rebuild)
+        names = [str(n) for n in (self.favorites or []) if str(n).strip()]
+        signature = [n.strip().lower() for n in names]
+
+        need_rebuild = bool(force)
+        try:
+            if getattr(self, "_fav_rendered_signature", None) != signature:
+                need_rebuild = True
+            if not isinstance(getattr(self, "_fav_items", None), dict):
+                need_rebuild = True
+        except Exception:
+            need_rebuild = True
+
+        # Se não for rebuild, só garante que ainda temos todos os itens renderizados.
+        if not need_rebuild:
+            try:
+                for n in names:
+                    if (n or "").strip().lower() not in self._fav_items:
+                        need_rebuild = True
+                        break
+            except Exception:
+                need_rebuild = True
+
+        if need_rebuild:
+            try:
+                container.clear_widgets()
+            except Exception:
+                pass
+            self._fav_items = {}
+            self._fav_rendered_signature = signature
+
+            if not names:
+                try:
+                    item = OneLineIconListItem(text="Sem favoritos. Adicione no Char.")
+                    item.add_widget(IconLeftWidget(icon="star-outline"))
+                    container.add_widget(item)
+                except Exception:
+                    pass
+                return
+
+            # Render rápido com cache (sem fazer requests aqui)
+            for name in names:
+                state = None if force else self._get_cached_fav_status(name)
+                last_iso = self._get_cached_fav_last_login_iso(name) if str(state).strip().lower() == "offline" else None
+                seen_iso = self._get_cached_last_seen_online_iso(name) if str(state).strip().lower() == "offline" else None
+                secondary, color = self._fav_status_presentation(state, seen_iso, last_iso)
+
+                try:
+                    item = TwoLineIconListItem(text=name, secondary_text=secondary)
+                    item.add_widget(IconLeftWidget(icon="account"))
+                    item.secondary_theme_text_color = "Custom"
+                    item.secondary_text_color = color
+                    item.bind(on_release=lambda _item, n=name: self._fav_actions(n, _item))
+                    self._fav_items[name.strip().lower()] = item
+                    container.add_widget(item)
+                except Exception:
+                    pass
+        else:
+            # Sem rebuild: atualiza texto/cor baseado no cache atual (barato)
+            for name in names:
+                try:
+                    key = (name or "").strip().lower()
+                    item = self._fav_items.get(key)
+                    if not item:
+                        continue
+                    state = None if force else self._get_cached_fav_status(name)
+                    last_iso = self._get_cached_fav_last_login_iso(name) if str(state).strip().lower() == "offline" else None
+                    seen_iso = self._get_cached_last_seen_online_iso(name) if str(state).strip().lower() == "offline" else None
+                    secondary, color = self._fav_status_presentation(state, seen_iso, last_iso)
+                    item.secondary_text = secondary
+                    item.secondary_text_color = color
+                except Exception:
+                    pass
+
+        # Decide quem precisa de refresh (TTL) e dispara worker em background
         names_to_check: list[str] = []
-        names = list(self.favorites)
         for name in names:
-            state = None if force else self._get_cached_fav_status(name)
-            last_iso = self._get_cached_fav_last_login_iso(name) if str(state).strip().lower() == "offline" else None
-            seen_iso = self._get_cached_last_seen_online_iso(name) if str(state).strip().lower() == "offline" else None
-            secondary, color = self._fav_status_presentation(state, seen_iso, last_iso)
-
-            item = TwoLineIconListItem(text=name, secondary_text=secondary)
-            item.add_widget(IconLeftWidget(icon="account"))
-            item.secondary_theme_text_color = "Custom"
-            item.secondary_text_color = color
-            item.bind(on_release=lambda _item, n=name: self._fav_actions(n, _item))
-
-            self._fav_items[name.strip().lower()] = item
-            container.add_widget(item)
-
-            if force or state is None or self._fav_status_needs_refresh(name, ttl_seconds=45):
+            try:
+                state = None if force else self._get_cached_fav_status(name)
+                if force or state is None or self._fav_status_needs_refresh(name, ttl_seconds=45):
+                    names_to_check.append(name)
+            except Exception:
                 names_to_check.append(name)
 
         if not silent and force:
@@ -2394,12 +2632,25 @@ class TibiaToolsApp(MDApp):
             except Exception:
                 pass
 
-        if names_to_check:
-            threading.Thread(
-                target=self._refresh_fav_statuses_worker,
-                args=(names_to_check, job_id),
-                daemon=True,
-            ).start()
+        if not names_to_check:
+            return
+
+        # Evita empilhar threads em refresh automático.
+        try:
+            if bool(getattr(self, "_fav_refreshing", False)) and (not force):
+                return
+        except Exception:
+            pass
+
+        self._fav_status_job_id += 1
+        job_id = self._fav_status_job_id
+        self._fav_refreshing = True
+
+        threading.Thread(
+            target=self._refresh_fav_statuses_worker,
+            args=(names_to_check, job_id),
+            daemon=True,
+        ).start()
 
     def _get_cached_fav_status(self, name: str) -> Optional[str]:
         key_clean = (name or "").strip().lower()
@@ -2675,16 +2926,39 @@ class TibiaToolsApp(MDApp):
         except Exception as e:
             print(f"[FAV] Erro ao remover favorito: {e}")
 
+    def _apply_fav_status_updates(self, updates, job_id: int) -> None:
+        """Aplica vários updates de status de uma vez no thread principal.
+
+        Isso evita `Clock.schedule_once` em loop (um por favorito), que pode engasgar a UI.
+        """
+        try:
+            if job_id != self._fav_status_job_id:
+                return
+            if not updates:
+                return
+            for u in updates:
+                try:
+                    name, st, seen_iso, fallback_login_iso = u
+                    self._set_fav_item_status(name, st, seen_iso, fallback_login_iso)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
     def _refresh_fav_statuses_worker(self, names: List[str], job_id: int):
         """Atualiza o status dos favoritos em background, minimizando chamadas e falsos OFF.
 
-        Em vez de checar 1 a 1 (muito request e pode dar falso OFF),
-        agrupamos por world e consultamos o /v4/world/{world} (lista de online players).
+        Em vez de checar 1 a 1 (muito request e pode dar falso OFF), agrupamos por world e
+        consultamos o /v4/world/{world} (lista de online players).
+
+        Otimização: calcula tudo em background e aplica numa única chamada no thread principal.
         """
         try:
+            updates: list[tuple[str, str, Optional[str], Optional[str]]] = []
+
             # 1) resolve world de cada char (cache -> TibiaData /v4/character)
-            name_to_world = {}
-            unknown = []
+            name_to_world: dict[str, str] = {}
+            unknown: list[str] = []
 
             for n in names:
                 if job_id != self._fav_status_job_id:
@@ -2698,7 +2972,7 @@ class TibiaToolsApp(MDApp):
                     unknown.append(n)
 
             # 2) agrupa por world
-            by_world = {}
+            by_world: dict[str, list[str]] = {}
             for n, w in name_to_world.items():
                 by_world.setdefault(w, []).append(n)
 
@@ -2713,19 +2987,16 @@ class TibiaToolsApp(MDApp):
                 for n in ns:
                     if job_id != self._fav_status_job_id:
                         return
+
                     is_on = (n or "").strip().lower() in online_set
                     st = "online" if is_on else "offline"
 
                     # Para "há quanto tempo está off": usamos o último instante em que o app confirmou ONLINE.
-                    seen_iso = None
-                    fallback_login_iso = None
+                    seen_iso: Optional[str] = None
+                    fallback_login_iso: Optional[str] = None
 
                     if st == "online":
-                        try:
-                            seen_iso = datetime.utcnow().isoformat()
-                            self._set_cached_last_seen_online_iso(n, seen_iso)
-                        except Exception:
-                            seen_iso = None
+                        seen_iso = datetime.utcnow().isoformat()
                     else:
                         seen_iso = self._get_cached_last_seen_online_iso(n)
                         if not seen_iso:
@@ -2735,34 +3006,26 @@ class TibiaToolsApp(MDApp):
                                 k = (n or "").strip().lower()
                                 if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
                                     fallback_login_iso = self._fetch_last_login_iso_for_char(n)
-                                    if fallback_login_iso:
-                                        self._set_cached_fav_last_login_iso(n, fallback_login_iso)
-                                    else:
+                                    if not fallback_login_iso:
                                         self._cache_set(f"fav_last_login_fail:{k}", True)
 
-                    Clock.schedule_once(
-                        lambda dt, nn=n, stt=st, si=seen_iso, fi=fallback_login_iso: self._set_fav_item_status(nn, stt, si, fi),
-                        0,
-                    )
+                    updates.append((n, st, seen_iso, fallback_login_iso))
 
             # 4) fallback (se não conseguimos world): tenta método antigo (tibia.com / endpoint do char)
             for n in unknown:
                 if job_id != self._fav_status_job_id:
                     return
+
                 st = self._fetch_character_online_state(n)
                 if st is None:
                     # mantém último estado se existir, senão offline
                     k = (n or "").strip().lower()
                     st = getattr(self, "_fav_status_cache", {}).get(k) or "offline"
 
-                seen_iso = None
-                fallback_login_iso = None
+                seen_iso: Optional[str] = None
+                fallback_login_iso: Optional[str] = None
                 if str(st).strip().lower() == "online":
-                    try:
-                        seen_iso = datetime.utcnow().isoformat()
-                        self._set_cached_last_seen_online_iso(n, seen_iso)
-                    except Exception:
-                        seen_iso = None
+                    seen_iso = datetime.utcnow().isoformat()
                 else:
                     seen_iso = self._get_cached_last_seen_online_iso(n)
                     if not seen_iso:
@@ -2771,15 +3034,13 @@ class TibiaToolsApp(MDApp):
                             k = (n or "").strip().lower()
                             if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
                                 fallback_login_iso = self._fetch_last_login_iso_for_char(n)
-                                if fallback_login_iso:
-                                    self._set_cached_fav_last_login_iso(n, fallback_login_iso)
-                                else:
+                                if not fallback_login_iso:
                                     self._cache_set(f"fav_last_login_fail:{k}", True)
 
-                Clock.schedule_once(
-                    lambda dt, nn=n, stt=st, si=seen_iso, fi=fallback_login_iso: self._set_fav_item_status(nn, stt, si, fi),
-                    0,
-                )
+                updates.append((n, str(st), seen_iso, fallback_login_iso))
+
+            # aplica tudo de uma vez no thread principal
+            Clock.schedule_once(lambda _dt, ups=updates: self._apply_fav_status_updates(ups, job_id), 0)
         finally:
             Clock.schedule_once(lambda _dt: setattr(self, "_fav_refreshing", False), 0)
 

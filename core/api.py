@@ -206,6 +206,14 @@ def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> O
         html = _get_text(url, timeout=timeout, headers=UA)
         if not html:
             return None
+        # Fast path: tenta achar o Status via regex (evita BeautifulSoup e reduz uso de CPU/GIL no Android)
+        try:
+            m = re.search(r"status:</td>\s*<td[^>]*>\s*(online|offline)\s*<", html, flags=re.I)
+            if m:
+                return m.group(1).strip().lower() == "online"
+        except Exception:
+            pass
+
         soup = BeautifulSoup(html, "html.parser")
         # A página do char tem uma tabela com linhas "Label" / "Value".
         for tr in soup.find_all("tr"):
@@ -255,6 +263,34 @@ def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
         # Alguns chars não têm a lista atualizada (GuildStats mostra uma mensagem e não renderiza tabela).
         if "death list is not updated" in html.lower():
             return []
+
+        # Fast path: tenta extrair a coluna "Exp lost" via regex (sem BeautifulSoup) — bem mais leve no Android
+        try:
+            low = html.lower()
+            if "exp lost" in low:
+                pos = low.find("exp lost")
+                table_start = low.rfind("<table", 0, pos)
+                table_end = low.find("</table>", pos)
+                chunk = ""
+                if table_start != -1 and table_end != -1 and table_end > table_start:
+                    chunk = html[table_start:table_end]
+                else:
+                    chunk = html[pos:pos + 20000]  # limite defensivo
+
+                vals: List[str] = []
+                for m1 in re.finditer(r"<td[^>]*>\s*(-\s*[\d\.,]+)\s*</td>", chunk, flags=re.I):
+                    raw = (m1.group(1) or "").strip()
+                    digits = re.findall(r"\d+", raw)
+                    if not digits:
+                        continue
+                    num = int("".join(digits))
+                    if num < 10_000:
+                        continue
+                    vals.append(f"-{num:,}")
+                if vals:
+                    return vals
+        except Exception:
+            pass
 
         soup = BeautifulSoup(html, "html.parser")
 
@@ -388,6 +424,52 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
 
         if not html:
             return []
+
+        # Fast path: tenta extrair a tabela via regex (sem BeautifulSoup) — bem mais leve no Android
+        try:
+            def _parse_exp_to_int_fast(s: str) -> Optional[int]:
+                txt = (s or "").strip()
+                if not txt:
+                    return None
+                t = txt.replace("\u00a0", " ")
+                m0 = re.search(r"([+-])?\s*(\d[\d\s,\.]*)", t)
+                if not m0:
+                    return None
+                sign_ch = m0.group(1)
+                digits = re.findall(r"\d+", m0.group(2) or "")
+                if not digits:
+                    return None
+                num = int("".join(digits))
+                return -num if sign_ch == "-" else num
+
+            tr_re = re.compile(
+                r"<tr[^>]*>\s*<td[^>]*>\s*(\d{4}-\d{2}-\d{2})\s*</td>\s*<td[^>]*>(.*?)</td>",
+                flags=re.I | re.S,
+            )
+
+            fast_rows: List[Dict[str, Any]] = []
+            seen_dates = set()
+            for m1 in tr_re.finditer(html):
+                date_iso = m1.group(1)
+                if date_iso in seen_dates:
+                    continue
+                raw = m1.group(2) or ""
+                # remove tags e normaliza espaços
+                etext = re.sub(r"<[^>]+>", " ", raw)
+                etext = re.sub(r"\s+", " ", etext).strip()
+                exp_int = _parse_exp_to_int_fast(etext)
+                if exp_int is None:
+                    continue
+                # evita pegar colunas pequenas por engano
+                if abs(int(exp_int)) not in (0,) and abs(int(exp_int)) < 10_000:
+                    continue
+                seen_dates.add(date_iso)
+                fast_rows.append({'date': date_iso, 'exp_change': etext, 'exp_change_int': int(exp_int)})
+
+            if len(fast_rows) >= 3:
+                return fast_rows
+        except Exception:
+            pass
 
         soup = BeautifulSoup(html, "html.parser")
 
