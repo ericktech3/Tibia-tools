@@ -921,9 +921,7 @@ RootSM:
                             MDIconButton:
                                 id: skill_drop
                                 icon: "menu-down"
-                                on_release:
-                                    app._ensure_training_menus()
-                                    if app._menu_skill: app._menu_skill.open()
+                                on_release: app.training_open_menu("skill")
 
                         MDBoxLayout:
                             size_hint_y: None
@@ -940,9 +938,7 @@ RootSM:
                             MDIconButton:
                                 id: voc_drop
                                 icon: "menu-down"
-                                on_release:
-                                    app._ensure_training_menus()
-                                    if app._menu_vocation: app._menu_vocation.open()
+                                on_release: app.training_open_menu("voc")
 
                         MDBoxLayout:
                             size_hint_y: None
@@ -959,9 +955,7 @@ RootSM:
                             MDIconButton:
                                 id: weapon_drop
                                 icon: "menu-down"
-                                on_release:
-                                    app._ensure_training_menus()
-                                    if app._menu_weapon: app._menu_weapon.open()
+                                on_release: app.training_open_menu("weapon")
 
                 AppCard:
                     size_hint_y: None
@@ -1463,6 +1457,19 @@ RootSM:
                             spacing: dp(10)
 
                             MDLabel:
+                                text: "Iniciar automaticamente ao ligar"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_autostart
+                                active: True
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
                                 text: "Avisar quando ficar online"
                                 valign: "middle"
 
@@ -1498,8 +1505,8 @@ RootSM:
 
                         MDTextField:
                             id: set_bg_interval
-                            hint_text: "Intervalo do monitor (segundos) - ex: 60"
-                            text: "60"
+                            hint_text: "Intervalo do monitor (segundos) - ex: 30"
+                            text: "30"
                             mode: "rectangle"
                             input_filter: "int"
 

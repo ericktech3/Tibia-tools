@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import re
 import time
+import html as _html
 from urllib.parse import quote, quote_plus
 
 import requests
@@ -190,7 +191,7 @@ def is_character_online_tibiadata(name: str, world: Optional[str] = None, timeou
     except Exception:
         return None
 
-def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> Optional[bool]:
+def is_character_online_tibia_com(name: str, world: str, timeout: int = 12, *, light_only: bool = False) -> Optional[bool]:
     """Fallback extra usando o site oficial (tibia.com) para checar se o char está online.
 
     Importante: NÃO usamos a página do world porque é paginada (pode dar falso OFFLINE).
@@ -214,6 +215,9 @@ def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> O
         except Exception:
             pass
 
+        if light_only:
+            return None
+
         soup = BeautifulSoup(html, "html.parser")
         # A página do char tem uma tabela com linhas "Label" / "Value".
         for tr in soup.find_all("tr"):
@@ -235,7 +239,7 @@ def is_character_online_tibia_com(name: str, world: str, timeout: int = 12) -> O
         return None
 
 
-def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
+def fetch_guildstats_deaths_xp(name: str, timeout: int = 12, *, light_only: bool = False) -> List[str]:
     """Retorna a lista de 'Exp lost' (strings) do GuildStats, em ordem (mais recente primeiro).
 
     Observação: é um complemento (fansite). Se falhar, devolve lista vazia.
@@ -291,6 +295,9 @@ def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
                     return vals
         except Exception:
             pass
+
+        if light_only:
+            return []
 
         soup = BeautifulSoup(html, "html.parser")
 
@@ -361,7 +368,7 @@ def fetch_guildstats_deaths_xp(name: str, timeout: int = 12) -> List[str]:
         return []
 
 
-def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str, Any]]:
+def fetch_guildstats_exp_changes(name: str, timeout: int = 12, *, light_only: bool = False) -> List[Dict[str, Any]]:
     """Retorna o histórico (diário) de experiência do GuildStats (tab=9).
 
     Saída (ordem conforme a tabela):
@@ -426,12 +433,13 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
             return []
 
         # Fast path: tenta extrair a tabela via regex (sem BeautifulSoup) — bem mais leve no Android
+        # (robusto: não assume que Date/Exp são sempre as colunas 0/1)
         try:
             def _parse_exp_to_int_fast(s: str) -> Optional[int]:
                 txt = (s or "").strip()
                 if not txt:
                     return None
-                t = txt.replace("\u00a0", " ")
+                t = txt.replace(" ", " ")
                 m0 = re.search(r"([+-])?\s*(\d[\d\s,\.]*)", t)
                 if not m0:
                     return None
@@ -442,34 +450,121 @@ def fetch_guildstats_exp_changes(name: str, timeout: int = 12) -> List[Dict[str,
                 num = int("".join(digits))
                 return -num if sign_ch == "-" else num
 
-            tr_re = re.compile(
-                r"<tr[^>]*>\s*<td[^>]*>\s*(\d{4}-\d{2}-\d{2})\s*</td>\s*<td[^>]*>(.*?)</td>",
-                flags=re.I | re.S,
-            )
+            # Datas: ISO (YYYY-MM-DD) e DMY (DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY)
+            iso_re = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+            dmy_re = re.compile(r"\b(\d{2})[./-](\d{2})[./-](\d{4})\b")
 
-            fast_rows: List[Dict[str, Any]] = []
-            seen_dates = set()
-            for m1 in tr_re.finditer(html):
-                date_iso = m1.group(1)
-                if date_iso in seen_dates:
-                    continue
-                raw = m1.group(2) or ""
-                # remove tags e normaliza espaços
-                etext = re.sub(r"<[^>]+>", " ", raw)
-                etext = re.sub(r"\s+", " ", etext).strip()
-                exp_int = _parse_exp_to_int_fast(etext)
-                if exp_int is None:
-                    continue
-                # evita pegar colunas pequenas por engano
-                if abs(int(exp_int)) not in (0,) and abs(int(exp_int)) < 10_000:
-                    continue
-                seen_dates.add(date_iso)
-                fast_rows.append({'date': date_iso, 'exp_change': etext, 'exp_change_int': int(exp_int)})
+            def _extract_date_iso(s: str) -> Optional[str]:
+                txt = (s or "").strip()
+                m = iso_re.search(txt)
+                if m:
+                    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+                m = dmy_re.search(txt)
+                if m:
+                    dd, mm, yyyy = m.group(1), m.group(2), m.group(3)
+                    return f"{yyyy}-{mm}-{dd}"
+                return None
+
+            def _strip_tags(s: str) -> str:
+                t = s or ""
+                # remove blocos grandes que só atrapalham
+                t = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", t)
+                t = re.sub(r"(?is)<[^>]+>", " ", t)
+                try:
+                    t = _html.unescape(t)
+                except Exception:
+                    pass
+                t = t.replace(" ", " ")
+                t = re.sub(r"\s+", " ", t).strip()
+                return t
+
+            def _parse_rows(fragment: str) -> List[Dict[str, Any]]:
+                rows: List[Dict[str, Any]] = []
+                seen_dates = set()
+
+                for mtr in re.finditer(r"(?is)<tr[^>]*>.*?</tr>", fragment or ""):
+                    tr_html = mtr.group(0) or ""
+                    tds = re.findall(r"(?is)<td[^>]*>.*?</td>", tr_html)
+                    if len(tds) < 2:
+                        continue
+
+                    cells = [_strip_tags(td) for td in tds]
+
+                    date_iso = None
+                    for c in cells:
+                        date_iso = _extract_date_iso(c)
+                        if date_iso:
+                            break
+
+                    if not date_iso or date_iso in seen_dates:
+                        continue
+
+                    candidates = []
+                    for c in cells:
+                        exp_int = _parse_exp_to_int_fast(c)
+                        if exp_int is None:
+                            continue
+                        # evita pegar colunas pequenas (lvl/rank)
+                        if abs(int(exp_int)) not in (0,) and abs(int(exp_int)) < 10_000:
+                            continue
+                        has_sign = bool(re.search(r"^\s*[+-]", c))
+                        candidates.append((1 if has_sign else 0, abs(int(exp_int)), c, int(exp_int)))
+
+                    if not candidates:
+                        continue
+
+                    # Escolha do "Exp change":
+                    # 1) se houver valor com +/-, ele quase sempre é o delta
+                    # 2) se não houver, mas houver 0, preferimos 0 (evita pegar "Total experience")
+                    # 3) senão, pega o menor valor absoluto (delta costuma ser menor que o total)
+                    signed = [x for x in candidates if x[0] == 1]
+                    if signed:
+                        best = max(signed, key=lambda x: x[1])
+                    else:
+                        zeros = [x for x in candidates if x[3] == 0]
+                        if zeros:
+                            best = zeros[0]
+                        else:
+                            best = min(candidates, key=lambda x: x[1])
+
+                    _sgn, _abs, exp_txt, exp_int = best
+                    seen_dates.add(date_iso)
+                    rows.append({
+                        'date': date_iso,
+                        'exp_change': exp_txt,
+                        'exp_change_int': int(exp_int),
+                    })
+
+                return rows
+
+            def _extract_best_table_fragment(html_full: str) -> str:
+                best = ""
+                best_score = 0
+                for mt in re.finditer(r"(?is)<table[^>]*>.*?</table>", html_full or ""):
+                    chunk = mt.group(0) or ""
+                    score = len(iso_re.findall(chunk)) + len(dmy_re.findall(chunk))
+                    if score > best_score:
+                        best_score = score
+                        best = chunk
+                return best if best_score >= 3 else ""
+
+            fast_rows = _parse_rows(html)
+            if len(fast_rows) < 3:
+                frag = _extract_best_table_fragment(html)
+                if frag:
+                    alt = _parse_rows(frag)
+                    if len(alt) > len(fast_rows):
+                        fast_rows = alt
 
             if len(fast_rows) >= 3:
                 return fast_rows
+            if light_only and fast_rows:
+                return fast_rows
         except Exception:
             pass
+
+        if light_only:
+            return []
 
         soup = BeautifulSoup(html, "html.parser")
 

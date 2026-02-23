@@ -150,6 +150,20 @@ class TibiaToolsApp(MDApp):
         super().__init__(**kwargs)
         self.favorites: List[str] = []
 
+        # -----------------------------------------------------------------
+        # Boosted fetch (ANTI-TRAVAMENTO)
+        #
+        # Havia um loop indireto:
+        #   dashboard_refresh() -> update_boosted() -> _boosted_done() -> dashboard_refresh() -> ...
+        # Isso gerava threads em cascata, uso alto de CPU/rede e UI “travando”,
+        # principalmente após buscar personagem (que chama dashboard_refresh).
+        #
+        # Estes flags/lock evitam workers simultâneos e permitem throttling.
+        # -----------------------------------------------------------------
+        self._boosted_lock = threading.Lock()
+        self._boosted_inflight = False
+        self._boosted_last_fetch_mono = 0.0
+
         # Android background service handle (favorites monitor)
         self._bg_service = None
 
@@ -320,6 +334,13 @@ class TibiaToolsApp(MDApp):
             self._flush_cache_to_disk(force=True)
         except Exception:
             pass
+        # Garante que o monitor em segundo plano continue rodando mesmo com o app fechado.
+        # (Alguns usuários abrem e fecham rápido; isso assegura que o serviço seja iniciado no background.)
+        try:
+            Clock.schedule_once(lambda *_: self._safe_call(self._maybe_start_fav_monitor_service), 0)
+        except Exception:
+            pass
+
         return True
 
     def on_stop(self):
@@ -893,20 +914,14 @@ class TibiaToolsApp(MDApp):
     # Background service (Favorites monitor)
     # --------------------
     def _start_fav_monitor_service(self):
-        """Inicia o serviço em segundo plano (na prática: foreground service).
-
-        Ele é o responsável por enviar notificações de ONLINE / MORTE / LEVEL UP
-        mesmo com o app fechado.
-        """
+        """Inicia o serviço em segundo plano (foreground service) para monitorar favoritos."""
         if not self._is_android():
             return
 
-        # Em Android 13+ precisamos de POST_NOTIFICATIONS; sem isso o serviço pode
-        # falhar ao postar a notificação fixa do foreground.
+        # Em Android 13+ precisamos de POST_NOTIFICATIONS; sem isso o serviço pode falhar ao postar a notificação fixa do foreground.
         if self._android_sdk_int() >= 33:
             ok = self._ensure_post_notifications_permission(auto_open_settings=False)
             if not ok:
-                # Deixa o usuário decidir; não inicia para evitar crash/silêncio.
                 try:
                     self._prompt_enable_notifications_dialog()
                 except Exception:
@@ -914,25 +929,29 @@ class TibiaToolsApp(MDApp):
                 return
 
         try:
-            from android import AndroidService  # type: ignore
-
-            if self._bg_service is None:
-                # O texto aqui é só o "ticker"; o serviço em si chama startForeground com texto próprio.
-                self._bg_service = AndroidService("Tibia Tools", "Monitorando favoritos")
-
-            # Chamar start várias vezes é OK (idempotente na maioria dos devices)
-            self._bg_service.start("favwatch")
+            from jnius import autoclass  # type: ignore
+            ServiceFavwatch = autoclass('org.erick.tibiatools.ServiceFavwatch')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            ctx = PythonActivity.mActivity
+            # Usa overload com (icon, title, text, arg) quando disponível; senão cai no start(ctx, arg).
+            try:
+                ServiceFavwatch.start(ctx, '', 'Tibia Tools', 'Monitorando favoritos', '')
+            except Exception:
+                ServiceFavwatch.start(ctx, '')
+            self._bg_service = True
         except Exception:
-            # último recurso: não quebrar o app
             _write_crash_log(traceback.format_exc())
 
     def _stop_fav_monitor_service(self):
         if not self._is_android():
             return
         try:
-            if self._bg_service is not None:
-                self._bg_service.stop()
-                self._bg_service = None
+            from jnius import autoclass  # type: ignore
+            ServiceFavwatch = autoclass('org.erick.tibiatools.ServiceFavwatch')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            ctx = PythonActivity.mActivity
+            ServiceFavwatch.stop(ctx)
+            self._bg_service = None
         except Exception:
             _write_crash_log(traceback.format_exc())
 
@@ -953,6 +972,63 @@ class TibiaToolsApp(MDApp):
         except Exception:
             _write_crash_log(traceback.format_exc())
 
+
+    # --------------------
+    # Shared state (Favorites monitor service)
+    # --------------------
+    def _load_fav_service_state_cached(self) -> dict:
+        """Carrega favorites.json (compartilhado com o serviço) com TTL curto.
+
+        Evita leituras de disco repetidas (Android pode ser caro).
+        """
+        try:
+            now = time.time()
+            c = getattr(self, "_svc_state_cache", None)
+            if isinstance(c, dict) and (now - float(c.get("t", 0))) < 2.0:
+                st = c.get("st")
+                if isinstance(st, dict):
+                    return st
+        except Exception:
+            pass
+
+        try:
+            st = fav_state.load_state(self.data_dir)
+            if not isinstance(st, dict):
+                st = {}
+        except Exception:
+            st = {}
+
+        try:
+            self._svc_state_cache = {"t": time.time(), "st": st}
+        except Exception:
+            pass
+        return st
+
+    def _get_service_last_entry(self, name: str) -> Optional[dict]:
+        key = (name or "").strip().lower()
+        if not key:
+            return None
+        try:
+            st = self._load_fav_service_state_cached()
+            last = st.get("last", {})
+            if isinstance(last, dict):
+                v = last.get(key)
+                return v if isinstance(v, dict) else None
+        except Exception:
+            return None
+        return None
+
+    def _service_entry_is_fresh(self, entry: dict, max_age_s: int = 90) -> bool:
+        try:
+            ts = entry.get("last_checked_iso")
+            if not ts:
+                return False
+            dt = datetime.fromisoformat(str(ts).strip())
+            age = (datetime.utcnow() - dt).total_seconds()
+            return age <= float(max_age_s)
+        except Exception:
+            return False
+
     def _sync_bg_monitor_state_from_ui(self):
         """Save background-monitor settings into favorites.json (shared with the service)."""
         try:
@@ -961,10 +1037,11 @@ class TibiaToolsApp(MDApp):
             notify_online = bool(scr.ids.set_bg_notify_online.active)
             notify_level = bool(scr.ids.set_bg_notify_level.active)
             notify_death = bool(scr.ids.set_bg_notify_death.active)
+            autostart = bool(scr.ids.set_bg_autostart.active) if 'set_bg_autostart' in scr.ids else True
             try:
-                interval = int((scr.ids.set_bg_interval.text or "60").strip())
+                interval = int((scr.ids.set_bg_interval.text or "30").strip())
             except Exception:
-                interval = 60
+                interval = 30
         except Exception:
             return
 
@@ -977,6 +1054,7 @@ class TibiaToolsApp(MDApp):
             st["notify_fav_online"] = notify_online
             st["notify_fav_level"] = notify_level
             st["notify_fav_death"] = notify_death
+            st["autostart_on_boot"] = autostart
             st["interval_seconds"] = max(20, min(600, int(interval)))
             fav_state.save_state(self.data_dir, st)
         except Exception:
@@ -1030,9 +1108,32 @@ class TibiaToolsApp(MDApp):
             except Exception:
                 pass
 
-        # atualiza boosted ao vivo (não trava UI)
+        # Atualiza Boosted ao vivo (sem travar UI), mas com *throttling*.
+        # Chamar isso a cada dashboard_refresh (ex: ao buscar personagem) cria
+        # muita atividade de rede/CPU no Android. Atualizamos apenas se o cache
+        # estiver ausente ou "velho" o suficiente.
         try:
-            self.update_boosted(silent=True)
+            need_live = False
+            ts = None
+            try:
+                ts = (self.cache.get("boosted") or {}).get("ts")
+            except Exception:
+                ts = None
+
+            if not ts:
+                need_live = True
+            else:
+                try:
+                    dt = datetime.fromisoformat(str(ts))
+                    age_s = (datetime.utcnow() - dt).total_seconds()
+                    # Boosted muda 1x por dia; 6h é um bom equilíbrio.
+                    if age_s > 6 * 3600:
+                        need_live = True
+                except Exception:
+                    need_live = True
+
+            if need_live:
+                self.update_boosted(silent=True)
         except Exception:
             pass
 
@@ -1614,11 +1715,7 @@ class TibiaToolsApp(MDApp):
                 pass
             return cached.strip()
 
-        # backward compat: usa cache antigo como fallback (menos preciso)
-        try:
-            return self._get_cached_fav_last_login_iso(name)
-        except Exception:
-            return None
+        return None
 
 
 
@@ -1633,6 +1730,48 @@ class TibiaToolsApp(MDApp):
             else:
                 self._last_seen_online_cache.pop(key, None)
                 self._cache_set(f"last_seen_online:{key}", None)
+        except Exception:
+            pass
+
+
+    def _get_cached_offline_since_iso(self, name: str) -> Optional[str]:
+        """Instante (UTC ISO) em que o app/serviço detectou a transição Online -> Offline.
+
+        Esse é o mais próximo de "quando deslogou" que dá para medir automaticamente.
+        """
+        key = (name or "").strip().lower()
+        if not key:
+            return None
+        try:
+            if key in getattr(self, "_offline_since_cache", {}):
+                v = self._offline_since_cache.get(key)
+                return str(v) if v else None
+        except Exception:
+            pass
+        cached = self._cache_get(f"offline_since:{key}")
+        if isinstance(cached, str) and cached.strip():
+            try:
+                if not hasattr(self, "_offline_since_cache"):
+                    self._offline_since_cache = {}
+                self._offline_since_cache[key] = cached.strip()
+            except Exception:
+                pass
+            return cached.strip()
+        return None
+
+    def _set_cached_offline_since_iso(self, name: str, iso: Optional[str]) -> None:
+        key = (name or "").strip().lower()
+        if not key:
+            return
+        try:
+            if not hasattr(self, "_offline_since_cache"):
+                self._offline_since_cache = {}
+            if iso and str(iso).strip():
+                self._offline_since_cache[key] = str(iso).strip()
+                self._cache_set(f"offline_since:{key}", str(iso).strip())
+            else:
+                self._offline_since_cache.pop(key, None)
+                self._cache_set(f"offline_since:{key}", None)
         except Exception:
             pass
 
@@ -1729,7 +1868,8 @@ class TibiaToolsApp(MDApp):
             scr.ids.set_bg_notify_online.active = bool(st.get("notify_fav_online", True))
             scr.ids.set_bg_notify_level.active = bool(st.get("notify_fav_level", True))
             scr.ids.set_bg_notify_death.active = bool(st.get("notify_fav_death", True))
-            scr.ids.set_bg_interval.text = str(int(st.get("interval_seconds", 60) or 60))
+            scr.ids.set_bg_interval.text = str(int(st.get("interval_seconds", 30) or 30))
+            scr.ids.set_bg_autostart.active = bool(st.get("autostart_on_boot", True))
         except Exception:
             pass
 
@@ -1974,7 +2114,7 @@ class TibiaToolsApp(MDApp):
         if "char_status" in home.ids:
             home.ids.char_status.text = message
 
-    def _char_show_result(self, home, payload: dict):
+    def _char_show_result(self, home, payload: dict, *, side_effects: bool = True):
         status = str(payload.get("status", "N/A"))
         title = str(payload.get("title", ""))
         voc = str(payload.get("voc", "N/A"))
@@ -1998,16 +2138,19 @@ class TibiaToolsApp(MDApp):
             home._last_char_payload = payload
         except Exception:
             pass
-        try:
-            if title:
-                self._prefs_set("last_char", title)
-                self._add_to_char_history(title)
-        except Exception:
-            pass
-        try:
-            self.dashboard_refresh()
-        except Exception:
-            pass
+
+        # Side-effects (prefs/history/dashboard) apenas na primeira renderização do resultado.
+        if side_effects:
+            try:
+                if title:
+                    self._prefs_set("last_char", title)
+                    self._add_to_char_history(title)
+            except Exception:
+                pass
+            try:
+                self.dashboard_refresh()
+            except Exception:
+                pass
 
         st = status.strip().lower()
         if st == "online":
@@ -2093,8 +2236,13 @@ class TibiaToolsApp(MDApp):
                     xlist = home.ids.char_xp_list
                     xlist.clear_widgets()
 
+                    loading_gs = bool(payload.get("gs_exp_loading"))
                     rows = exp_rows_30 if isinstance(exp_rows_30, list) else []
-                    if isinstance(exp_total_30, (int, float)) and rows:
+
+                    if loading_gs and not rows:
+                        home.ids.char_xp_total.text = "Carregando histórico de XP..."
+                        home.ids.char_xp_total.theme_text_color = "Hint"
+                    elif isinstance(exp_total_30, (int, float)) and rows:
                         # também calcula últimos 7 dias com base na data mais recente do histórico
                         total_7 = None
                         try:
@@ -2133,27 +2281,65 @@ class TibiaToolsApp(MDApp):
                         else:
                             home.ids.char_xp_total.text = f"Total 30d: {fmt_pt(int(exp_total_30))} XP"
                         home.ids.char_xp_total.theme_text_color = "Primary"
-                    else:
+                    elif not loading_gs:
                         home.ids.char_xp_total.text = "Histórico de XP indisponível. Toque no ícone ↗ para conferir."
                         home.ids.char_xp_total.theme_text_color = "Hint"
 
                     if not rows:
-                        it = OneLineIconListItem(text="Sem dados.")
+                        it = OneLineIconListItem(text=("Buscando dados no GuildStats..." if loading_gs else "Sem dados."))
                         it.add_widget(IconLeftWidget(icon="chart-line"))
                         xlist.add_widget(it)
                     else:
-                        for r in rows[:7]:
-                            ds = str(r.get("date") or "").strip()
-                            ev = r.get("exp_change_int")
-                            try:
-                                ev_i = int(ev)
-                            except Exception:
-                                continue
-                            sec = f"{fmt_pt(ev_i)} XP"
-                            icon = "trending-up" if ev_i >= 0 else "trending-down"
-                            item = TwoLineIconListItem(text=ds, secondary_text=sec)
-                            item.add_widget(IconLeftWidget(icon=icon))
-                            xlist.add_widget(item)
+                        # Mostra sempre os últimos 7 dias (consecutivos). Se o GuildStats não listar um dia,
+                        # exibimos 0 para ficar claro que não houve ganho/perda (ou que não foi trackeado).
+                        try:
+                            # Determina a data mais recente do histórico.
+                            ref_dates = []
+                            for rr in rows:
+                                ds0 = str(rr.get("date") or "").strip()
+                                if not ds0:
+                                    continue
+                                try:
+                                    ref_dates.append(datetime.fromisoformat(ds0).date())
+                                except Exception:
+                                    continue
+                            ref = max(ref_dates) if ref_dates else datetime.utcnow().date()
+
+                            day_map = {}
+                            for rr in rows:
+                                ds0 = str(rr.get("date") or "").strip()
+                                if not ds0:
+                                    continue
+                                try:
+                                    ev_i = int(rr.get("exp_change_int") or 0)
+                                except Exception:
+                                    continue
+                                # Se houver duplicata por data, soma (mais seguro).
+                                day_map[ds0] = int(day_map.get(ds0, 0)) + int(ev_i)
+
+                            for i in range(0, 7):
+                                d = ref - timedelta(days=i)
+                                ds = d.isoformat()
+                                ev_i = int(day_map.get(ds, 0))
+                                sec = f"{fmt_pt(ev_i)} XP"
+                                icon = "trending-up" if ev_i >= 0 else "trending-down"
+                                item = TwoLineIconListItem(text=ds, secondary_text=sec)
+                                item.add_widget(IconLeftWidget(icon=icon))
+                                xlist.add_widget(item)
+                        except Exception:
+                            # fallback: mostra os 7 primeiros registros como antes
+                            for r in rows[:7]:
+                                ds = str(r.get("date") or "").strip()
+                                ev = r.get("exp_change_int")
+                                try:
+                                    ev_i = int(ev)
+                                except Exception:
+                                    continue
+                                sec = f"{fmt_pt(ev_i)} XP"
+                                icon = "trending-up" if ev_i >= 0 else "trending-down"
+                                item = TwoLineIconListItem(text=ds, secondary_text=sec)
+                                item.add_widget(IconLeftWidget(icon=icon))
+                                xlist.add_widget(item)
                 except Exception:
                     pass
 
@@ -2209,236 +2395,28 @@ class TibiaToolsApp(MDApp):
             if not silent:
                 self.toast("Digite o nome do char.")
             return
-
+    
+        # Marca como "buscando" imediatamente (UI responsiva).
         self._char_set_loading(home, name)
         home.char_last_url = ""
         try:
             home.char_xp_source_url = ""
         except Exception:
             pass
-
-        def worker():
-            try:
-                data = fetch_character_tibiadata(name)
-                if not data:
-                    raise ValueError("Sem resposta da API.")
-                character_wrapper = data.get("character", {})
-                character = character_wrapper.get("character", character_wrapper) if isinstance(character_wrapper, dict) else {}
-                url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
-                title = str(character.get("name") or name)
-
-                voc = character.get("vocation", "N/A")
-                level = character.get("level", "N/A")
-                world = character.get("world", "N/A")
-
-                # Status (sem "unknown")
-                # A /v4/character às vezes atrasa; o mais confiável é o status na página do tibia.com.
-                status_raw = str(character.get("status") or "").strip().lower()
-
-                # 1) tenta tibia.com (não depende de world)
-                online_web = is_character_online_tibia_com(name, world or "")
-                if online_web is True:
-                    status = "online"
-                elif online_web is False:
-                    status = "offline"
-                else:
-                    # 2) fallback TibiaData
-                    online_td = (
-                        is_character_online_tibiadata(name, world)
-                        if world and str(world).strip().upper() != "N/A"
-                        else None
-                    )
-                    if online_td is True:
-                        status = "online"
-                    else:
-                        status = "online" if status_raw == "online" else "offline"
-
-                guild = character.get("guild") or {}
-                guild_name = ""
-                guild_rank = ""
-                if isinstance(guild, dict) and guild.get("name"):
-                    guild_name = str(guild.get("name") or "").strip()
-                    guild_rank = str(guild.get("rank") or guild.get("title") or "").strip()
-
-                guild_line = (
-                    f"Guild: {guild_name}{(' (' + guild_rank + ')') if guild_rank else ''}"
-                    if guild_name
-                    else "Guild: N/A"
-                )
-
-                houses = character.get("houses") or []
-                houses_list = []
-                if isinstance(houses, list):
-                    for h in houses:
-                        if isinstance(h, dict):
-                            hn = str(h.get("name") or h.get("house") or "").strip()
-                            ht = str(h.get("town") or "").strip()
-                            if hn and ht:
-                                houses_list.append(f"{hn} ({ht})")
-                            elif hn:
-                                houses_list.append(hn)
-                        elif isinstance(h, str) and h.strip():
-                            houses_list.append(h.strip())
-
-                if houses_list:
-                    if len(houses_list) == 1:
-                        house_line = f"Houses: {houses_list[0]}"
-                    else:
-                        house_line = f"Houses: {len(houses_list)} (toque para ver)"
-                else:
-                    house_line = "Houses: Nenhuma"
-
-                deaths = (character.get('deaths') or character_wrapper.get('deaths') or data.get('deaths') or [])
-                if not isinstance(deaths, list):
-                    deaths = []
-
-                # ----------------------------
-                # XP últimos ~30 dias (GuildStats tab=9)
-                # ----------------------------
-                # Preferimos %20 (quote) — em alguns casos o GuildStats não responde bem com "+".
-                gs_exp_url = f"https://guildstats.eu/character?nick={urllib.parse.quote((title or name), safe='')}&tab=9"
-                exp_rows_30 = []
-                exp_total_30 = None
-                try:
-                    rows = self._cache_get(f"gs_exp_rows:{(title or name).strip().lower()}", ttl_seconds=10 * 60)
-                    if rows is None:
-                        rows = fetch_guildstats_exp_changes(title or name)
-                        try:
-                            self._cache_set(f"gs_exp_rows:{(title or name).strip().lower()}", rows or [])
-                        except Exception:
-                            pass
-
-                    if rows:
-                        dates = []
-                        for r in rows:
-                            ds = str(r.get("date") or "")
-                            try:
-                                dates.append(datetime.fromisoformat(ds).date())
-                            except Exception:
-                                pass
-                        ref = max(dates) if dates else datetime.utcnow().date()
-                        cutoff = ref - timedelta(days=30)
-
-                        for r in rows:
-                            ds = str(r.get("date") or "")
-                            try:
-                                d = datetime.fromisoformat(ds).date()
-                            except Exception:
-                                continue
-                            if d < cutoff:
-                                continue
-                            exp_rows_30.append(r)
-
-                        exp_rows_30.sort(key=lambda x: x.get("date", ""), reverse=True)
-                        exp_total_30 = int(sum(int(r.get("exp_change_int") or 0) for r in exp_rows_30))
-                except Exception:
-                    exp_rows_30 = []
-                    exp_total_30 = None
-
-                # XP lost por morte:
-                # 1) tenta GuildStats (fansite) por ordem (mais recente -> mais recente)
-                # 2) se falhar/bloquear, calcula a estimativa offline (igual GuildStats: promoted + 7 blessings)
-                xp_list = []
-                # Busca no cache primeiro (mortes mudam pouco; economiza parsing pesado)
-                if deaths:
-                    xp_list = self._cache_get(f"gs_death_xp:{(title or name).strip().lower()}", ttl_seconds=6 * 3600)
-                    if xp_list is None:
-                        try:
-                            xp_list = fetch_guildstats_deaths_xp(title or name)
-                        except Exception:
-                            xp_list = []
-                        try:
-                            self._cache_set(f"gs_death_xp:{(title or name).strip().lower()}", xp_list or [])
-                        except Exception:
-                            pass
-
-                if xp_list:
-                    for i, d in enumerate(deaths):
-                        if i >= len(xp_list):
-                            break
-                        if isinstance(d, dict) and not d.get("exp_lost"):
-                            d["exp_lost"] = xp_list[i]
-
-                # Fallback robusto: estimativa local (não depende de scraping)
-                for d in deaths:
-                    if not isinstance(d, dict):
-                        continue
-                    if d.get("exp_lost"):
-                        continue
-                    lvl = d.get("level")
-                    try:
-                        lvl_int = int(lvl)
-                    except Exception:
-                        continue
-                    exp_lost = estimate_death_exp_lost(lvl_int, blessings=7, promoted=True, retro_hardcore=False)
-                    if exp_lost:
-                        d["exp_lost"] = f"-{exp_lost:,}"
-
-                payload = {
-                    "title": title,
-                    "status": status,
-                    "voc": voc,
-                    "level": level,
-                    "world": world,
-                    "guild": {"name": guild_name, "rank": guild_rank} if guild_name else None,
-                    "houses": houses_list,
-                    # Mantemos as strings por compat (fallback antigo / outros pontos)
-                    "guild_line": guild_line,
-                    "house_line": house_line,
-                    "deaths": deaths,
-
-                    # XP 30 dias (GuildStats)
-                    "exp_rows_30": exp_rows_30,
-                    "exp_total_30": exp_total_30,
-                    "gs_exp_url": gs_exp_url,
-                }
-
-                # "Última vez online" (offline duration)
-                try:
-                    if status == "online":
-                        # atualiza sempre o instante em que vimos ONLINE (útil para calcular o OFF depois)
-                        try:
-                            self._set_cached_last_seen_online_iso(title, datetime.utcnow().isoformat())
-                        except Exception:
-                            pass
-                        payload["last_login_iso"] = None
-                        payload["last_login_ago"] = None
-                    else:
-                        seen_iso = self._get_cached_last_seen_online_iso(title)
-                        if seen_iso:
-                            try:
-                                dt = datetime.fromisoformat(str(seen_iso).strip())
-                                payload["last_login_iso"] = str(seen_iso).strip()
-                                payload["last_login_ago"] = self._format_ago_long(dt)
-                            except Exception:
-                                payload["last_login_iso"] = None
-                                payload["last_login_ago"] = None
-                        else:
-                            # Fallback (menos preciso): TibiaData "Last Login" (hora que entrou).
-                            last_dt = None
-                            try:
-                                last_dt = self._extract_last_login_dt_from_tibiadata(data)
-                            except Exception:
-                                last_dt = None
-                            if last_dt:
-                                payload["last_login_iso"] = last_dt.isoformat()
-                                payload["last_login_ago"] = self._format_ago_long(last_dt)
-                            else:
-                                payload["last_login_iso"] = None
-                                payload["last_login_ago"] = None
-                except Exception:
-                    payload["last_login_iso"] = None
-                    payload["last_login_ago"] = None
-
-
-                return True, payload, url
-            except Exception as e:
-                return False, f"Erro: {e}", ""
-
-        def done(res):
-            ok, payload_or_msg, url = res
+    
+        # Token para evitar que resultados de buscas antigas sobrescrevam a busca atual.
+        try:
+            self._char_search_seq = int(getattr(self, "_char_search_seq", 0)) + 1
+        except Exception:
+            self._char_search_seq = int(time.time() * 1000)
+        seq = self._char_search_seq
+    
+        def done_stage1(ok: bool, payload_or_msg, url: str):
+            # Só aplica se ainda for a busca atual
+            if getattr(self, "_char_search_seq", None) != seq:
+                return
+    
             home.char_last_url = url
-
             try:
                 if ok and isinstance(payload_or_msg, dict):
                     home.char_xp_source_url = str(payload_or_msg.get("gs_exp_url") or "")
@@ -2446,9 +2424,10 @@ class TibiaToolsApp(MDApp):
                     home.char_xp_source_url = ""
             except Exception:
                 home.char_xp_source_url = ""
-
+    
             if ok:
-                self._char_show_result(home, payload_or_msg)
+                self._char_show_result(home, payload_or_msg, side_effects=True)
+    
                 # cache do world para a aba Favoritos
                 try:
                     w = str((payload_or_msg or {}).get("world") or "").strip()
@@ -2476,19 +2455,371 @@ class TibiaToolsApp(MDApp):
                         self._set_cached_fav_last_login_iso(t, None)
                 except Exception:
                     pass
+    
                 if not silent:
                     self.toast("Char encontrado.")
             else:
                 self._char_show_error(home, str(payload_or_msg))
                 if not silent:
                     self.toast(str(payload_or_msg))
+    
+        def done_stage2(payload: dict, url: str):
+            # Só aplica se ainda for a busca atual e se o char exibido for o mesmo
+            if getattr(self, "_char_search_seq", None) != seq:
+                return
+            try:
+                cur = getattr(home, "_last_char_payload", None) or {}
+                cur_title = str(cur.get("title") or "").strip().lower()
+                new_title = str(payload.get("title") or "").strip().lower()
+                if cur_title and new_title and cur_title != new_title:
+                    return
+            except Exception:
+                pass
+    
+            home.char_last_url = url
+            try:
+                home.char_xp_source_url = str(payload.get("gs_exp_url") or "")
+            except Exception:
+                pass
+    
+            # Re-render sem side-effects (não mexe em prefs/histórico/dashboard de novo)
+            self._char_show_result(home, payload, side_effects=False)
+    
+        def worker():
+            try:
+                data = fetch_character_tibiadata(name)
+                if not data:
+                    raise ValueError("Sem resposta da API.")
+    
+                character_wrapper = data.get("character", {})
+                character = character_wrapper.get("character", character_wrapper) if isinstance(character_wrapper, dict) else {}
+    
+                url = f"https://www.tibia.com/community/?subtopic=characters&name={name.replace(' ', '+')}"
+                title = str(character.get("name") or name)
+    
+                voc = character.get("vocation", "N/A")
+                level = character.get("level", "N/A")
+                world = character.get("world", "N/A")
+    
+                # Status: prioriza TibiaData (rápido). Dados oficiais (tibia.com) ficam para o "enriquecimento".
+                status_raw = str(character.get("status") or "").strip().lower()
+                status = "online" if status_raw == "online" else "offline"
 
-        def run():
-            res = worker()
-            Clock.schedule_once(lambda *_: done(res), 0)
+                # Correção: TibiaData/tibia.com podem dar falso OFF.
+                # A lista oficial de players online por world costuma ser a fonte mais confiável.
+                world_status_checked = False
+                try:
+                    w_clean = str(world or "").strip()
+                    if w_clean and w_clean.upper() != "N/A":
+                        online_set = self._fetch_world_online_players(w_clean, timeout=12)
+                        if online_set is not None:
+                            world_status_checked = True
+                            status = "online" if (title or name).strip().lower() in online_set else "offline"
+                except Exception:
+                    world_status_checked = False
+    
+                guild = character.get("guild") or {}
+                guild_name = ""
+                guild_rank = ""
+                if isinstance(guild, dict) and guild.get("name"):
+                    guild_name = str(guild.get("name") or "").strip()
+                    guild_rank = str(guild.get("rank") or guild.get("title") or "").strip()
+    
+                guild_line = (
+                    f"Guild: {guild_name}{(' (' + guild_rank + ')') if guild_rank else ''}"
+                    if guild_name
+                    else "Guild: N/A"
+                )
+    
+                houses = character.get("houses") or []
+                houses_list = []
+                if isinstance(houses, list):
+                    for h in houses:
+                        if isinstance(h, dict):
+                            hn = str(h.get("name") or h.get("house") or "").strip()
+                            ht = str(h.get("town") or "").strip()
+                            if hn and ht:
+                                houses_list.append(f"{hn} ({ht})")
+                            elif hn:
+                                houses_list.append(hn)
+                        elif isinstance(h, str) and h.strip():
+                            houses_list.append(h.strip())
+    
+                if houses_list:
+                    if len(houses_list) == 1:
+                        house_line = f"Houses: {houses_list[0]}"
+                    else:
+                        house_line = f"Houses: {len(houses_list)} (toque para ver)"
+                else:
+                    house_line = "Houses: Nenhuma"
+    
+                deaths = (character.get('deaths') or character_wrapper.get('deaths') or data.get('deaths') or [])
+                if not isinstance(deaths, list):
+                    deaths = []
+    
+                # Fonte do XP 30 dias (GuildStats tab=9)
+                gs_exp_url = f"https://guildstats.eu/character?nick={urllib.parse.quote((title or name), safe='')}&tab=9"
+    
+                # Fallback robusto imediato: estimativa local (não depende de scraping)
+                # (A etapa 2 tenta sobrescrever com valores do GuildStats se disponíveis.)
+                for d in deaths:
+                    if not isinstance(d, dict):
+                        continue
+                    if d.get("exp_lost"):
+                        continue
+                    lvl = d.get("level")
+                    try:
+                        lvl_int = int(lvl)
+                    except Exception:
+                        continue
+                    exp_lost = estimate_death_exp_lost(lvl_int, blessings=7, promoted=True, retro_hardcore=False)
+                    if exp_lost:
+                        d["exp_lost"] = f"-{exp_lost:,}"
+    
+                payload = {
+                    "title": title,
+                    "status": status,
+                    "voc": voc,
+                    "level": level,
+                    "world": world,
+                    "guild": {"name": guild_name, "rank": guild_rank} if guild_name else None,
+                    "houses": houses_list,
+                    "guild_line": guild_line,
+                    "house_line": house_line,
+                    "deaths": deaths,
+    
+                    # XP 30 dias (GuildStats) — carregado em background (stage 2)
+                    "exp_rows_30": [],
+                    "exp_total_30": None,
+                    "gs_exp_url": gs_exp_url,
+                    "gs_exp_loading": True,
 
-        threading.Thread(target=run, daemon=True).start()
+                    "_world_status_checked": bool(world_status_checked),
+                }
+    
+                # "Última vez online" (offline duration)
+                try:
+                    if status == "online":
+                        # atualiza sempre o instante em que vimos ONLINE (útil para calcular o OFF depois)
+                        try:
+                            self._set_cached_last_seen_online_iso(title, datetime.utcnow().isoformat())
+                        except Exception:
+                            pass
+                        payload["last_login_iso"] = None
+                        payload["last_login_ago"] = None
+                    else:
+                        # Opção 1 (mais fiel): usa offline_since (detectado pelo monitor em background) quando disponível.
+                        off_iso = None
+                        try:
+                            fav_set = {str(x).strip().lower() for x in (self.favorites or []) if str(x).strip()}
+                            if (title or "").strip().lower() in fav_set:
+                                ent = self._get_service_last_entry(title)
+                                if ent and (not bool(ent.get("online"))):
+                                    v = ent.get("offline_since_iso")
+                                    if isinstance(v, str) and v.strip():
+                                        off_iso = v.strip()
+                        except Exception:
+                            off_iso = None
 
+                        if off_iso:
+                            try:
+                                dt = datetime.fromisoformat(off_iso)
+                                payload["last_login_iso"] = off_iso
+                                payload["last_login_ago"] = self._format_ago_long(dt)
+                            except Exception:
+                                payload["last_login_iso"] = None
+                                payload["last_login_ago"] = None
+                        else:
+                            # Fallback: último instante em que vimos ONLINE (quando o app estava aberto)
+                            seen_iso = self._get_cached_last_seen_online_iso(title)
+                            if seen_iso:
+                                try:
+                                    dt = datetime.fromisoformat(str(seen_iso).strip())
+                                    payload["last_login_iso"] = str(seen_iso).strip()
+                                    payload["last_login_ago"] = self._format_ago_long(dt)
+                                except Exception:
+                                    payload["last_login_iso"] = None
+                                    payload["last_login_ago"] = None
+                            else:
+                                # Último recurso (não é logout): TibiaData "Last Login".
+                                last_dt = None
+                                try:
+                                    last_dt = self._extract_last_login_dt_from_tibiadata(data)
+                                except Exception:
+                                    last_dt = None
+                                if last_dt:
+                                    payload["last_login_iso"] = last_dt.isoformat()
+                                    payload["last_login_ago"] = self._format_ago_long(last_dt)
+                                else:
+                                    payload["last_login_iso"] = None
+                                    payload["last_login_ago"] = None
+                except Exception:
+                    payload["last_login_iso"] = None
+                    payload["last_login_ago"] = None
+    
+                # Mostra o resultado básico imediatamente.
+                Clock.schedule_once(lambda *_: done_stage1(True, payload, url), 0)
+    
+                # Se outra busca começou, não continua.
+                if getattr(self, "_char_search_seq", None) != seq:
+                    return
+    
+                # -----------------------------------------------------------
+                # Stage 2: Enriquecimento (GuildStats + status oficial tibia.com)
+                # - roda em background
+                # - não bloqueia a exibição do resultado básico
+                # -----------------------------------------------------------
+                try:
+                    # Status "oficial": tenta novamente via /v4/world (mais confiável) e evita sobrescrever se já checamos.
+                    if not bool(payload.get("_world_status_checked")):
+                        try:
+                            w_clean2 = str(payload.get("world") or "").strip()
+                            if w_clean2 and w_clean2.upper() != "N/A":
+                                online_set2 = self._fetch_world_online_players(w_clean2, timeout=12)
+                                if online_set2 is not None:
+                                    payload["_world_status_checked"] = True
+                                    payload["status"] = "online" if (title or name).strip().lower() in online_set2 else "offline"
+                        except Exception:
+                            pass
+
+                    # Tibia.com apenas como fallback (pode dar falso OFF)
+                    if not bool(payload.get("_world_status_checked")):
+                        try:
+                            online_web = is_character_online_tibia_com(title or name, world or "")
+                        except Exception:
+                            online_web = None
+                        if online_web is True:
+                            payload["status"] = "online"
+                        elif online_web is False:
+                            payload["status"] = "offline"
+    
+                    # Atualiza last_login_* com base no status refinado
+                    try:
+                        if payload.get("status") == "online":
+                            try:
+                                self._set_cached_last_seen_online_iso(title, datetime.utcnow().isoformat())
+                            except Exception:
+                                pass
+                            payload["last_login_iso"] = None
+                            payload["last_login_ago"] = None
+                        else:
+                            # se for favorito e o serviço marcou offline_since, usa isso
+                            off_iso = None
+                            try:
+                                fav_set = {str(x).strip().lower() for x in (self.favorites or []) if str(x).strip()}
+                                if (title or "").strip().lower() in fav_set:
+                                    ent = self._get_service_last_entry(title)
+                                    if ent and (not bool(ent.get("online"))):
+                                        v = ent.get("offline_since_iso")
+                                        if isinstance(v, str) and v.strip():
+                                            off_iso = v.strip()
+                            except Exception:
+                                off_iso = None
+
+                            if off_iso:
+                                try:
+                                    dt = datetime.fromisoformat(off_iso)
+                                    payload["last_login_iso"] = off_iso
+                                    payload["last_login_ago"] = self._format_ago_long(dt)
+                                except Exception:
+                                    pass
+                            else:
+                                seen_iso = self._get_cached_last_seen_online_iso(title)
+                                if seen_iso:
+                                    try:
+                                        dt = datetime.fromisoformat(str(seen_iso).strip())
+                                        payload["last_login_iso"] = str(seen_iso).strip()
+                                        payload["last_login_ago"] = self._format_ago_long(dt)
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+    
+                    # XP últimos ~30 dias (GuildStats tab=9)
+                    exp_rows_30 = []
+                    exp_total_30 = None
+                    try:
+                        key = f"gs_exp_rows:{(title or name).strip().lower()}"
+                        rows = self._cache_get(key, ttl_seconds=10 * 60)
+                        if rows is None:
+                            rows = fetch_guildstats_exp_changes(title or name, light_only=self._is_android())
+                            try:
+                                self._cache_set(key, rows or [])
+                            except Exception:
+                                pass
+    
+                        if rows:
+                            dates = []
+                            for r in rows:
+                                ds = str(r.get("date") or "")
+                                try:
+                                    dates.append(datetime.fromisoformat(ds).date())
+                                except Exception:
+                                    pass
+                            ref = max(dates) if dates else datetime.utcnow().date()
+                            cutoff = ref - timedelta(days=30)
+    
+                            for r in rows:
+                                ds = str(r.get("date") or "")
+                                try:
+                                    d = datetime.fromisoformat(ds).date()
+                                except Exception:
+                                    continue
+                                if d < cutoff:
+                                    continue
+                                exp_rows_30.append(r)
+    
+                            exp_rows_30.sort(key=lambda x: x.get("date", ""), reverse=True)
+                            exp_total_30 = int(sum(int(r.get("exp_change_int") or 0) for r in exp_rows_30))
+                    except Exception:
+                        exp_rows_30 = []
+                        exp_total_30 = None
+    
+                    payload["exp_rows_30"] = exp_rows_30
+                    payload["exp_total_30"] = exp_total_30
+                    payload["gs_exp_loading"] = False
+    
+                    # XP lost por morte (GuildStats tab=5) — tenta sobrescrever a estimativa
+                    try:
+                        deaths2 = payload.get("deaths") or []
+                        xp_list = []
+                        if deaths2:
+                            key2 = f"gs_death_xp:{(title or name).strip().lower()}"
+                            xp_list = self._cache_get(key2, ttl_seconds=6 * 3600)
+                            if xp_list is None:
+                                try:
+                                    xp_list = fetch_guildstats_deaths_xp(title or name, light_only=self._is_android())
+                                except Exception:
+                                    xp_list = []
+                                try:
+                                    self._cache_set(key2, xp_list or [])
+                                except Exception:
+                                    pass
+    
+                        if xp_list:
+                            for i, d in enumerate(deaths2):
+                                if i >= len(xp_list):
+                                    break
+                                if isinstance(d, dict) and xp_list[i]:
+                                    d["exp_lost"] = xp_list[i]
+                            payload["deaths"] = deaths2
+                    except Exception:
+                        pass
+    
+                except Exception:
+                    # não falha a busca básica por conta do enrichment
+                    pass
+    
+                # Aplica o enrichment na UI (sem side-effects)
+                if getattr(self, "_char_search_seq", None) == seq:
+                    Clock.schedule_once(lambda *_: done_stage2(payload, url), 0)
+    
+            except Exception as e:
+                Clock.schedule_once(lambda *_: done_stage1(False, f"Erro: {e}", ""), 0)
+    
+        threading.Thread(target=worker, daemon=True).start()
+    
+    
     def open_last_in_browser(self):
         home = self.root.get_screen("home")
         url = getattr(home, "char_last_url", "") or ""
@@ -2546,6 +2877,15 @@ class TibiaToolsApp(MDApp):
         names = [str(n) for n in (self.favorites or []) if str(n).strip()]
         signature = [n.strip().lower() for n in names]
 
+        # Estado do serviço (compartilhado via favorites.json)
+        service_last = {}
+        try:
+            st_svc = self._load_fav_service_state_cached()
+            v = st_svc.get("last", {}) if isinstance(st_svc, dict) else {}
+            service_last = v if isinstance(v, dict) else {}
+        except Exception:
+            service_last = {}
+
         need_rebuild = bool(force)
         try:
             if getattr(self, "_fav_rendered_signature", None) != signature:
@@ -2584,10 +2924,44 @@ class TibiaToolsApp(MDApp):
 
             # Render rápido com cache (sem fazer requests aqui)
             for name in names:
-                state = None if force else self._get_cached_fav_status(name)
-                last_iso = self._get_cached_fav_last_login_iso(name) if str(state).strip().lower() == "offline" else None
-                seen_iso = self._get_cached_last_seen_online_iso(name) if str(state).strip().lower() == "offline" else None
-                secondary, color = self._fav_status_presentation(state, seen_iso, last_iso)
+                key = (name or "").strip().lower()
+
+                # Preferir estado do serviço se estiver "fresco"
+                svc = service_last.get(key) if isinstance(service_last, dict) else None
+                use_svc = bool(isinstance(svc, dict) and self._service_entry_is_fresh(svc, max_age_s=90))
+
+                if use_svc:
+                    is_on = bool(svc.get("online"))
+                    state = "online" if is_on else "offline"
+                    off_iso = None if is_on else (svc.get("offline_since_iso") if isinstance(svc.get("offline_since_iso"), str) else None)
+                    seen_iso = (svc.get("last_seen_online_iso") if isinstance(svc.get("last_seen_online_iso"), str) else None)
+
+                    # sincroniza caches locais
+                    try:
+                        if not hasattr(self, "_fav_status_cache"):
+                            self._fav_status_cache = {}
+                        self._fav_status_cache[key] = state
+                        self._cache_set(f"fav_status:{key}", state)
+                    except Exception:
+                        pass
+                    try:
+                        if state == "online":
+                            self._set_cached_offline_since_iso(name, None)
+                        elif off_iso:
+                            self._set_cached_offline_since_iso(name, off_iso)
+                    except Exception:
+                        pass
+                    try:
+                        if is_on and seen_iso:
+                            self._set_cached_last_seen_online_iso(name, seen_iso)
+                    except Exception:
+                        pass
+                else:
+                    state = None if force else self._get_cached_fav_status(name)
+                    off_iso = self._get_cached_offline_since_iso(name) if str(state).strip().lower() == "offline" else None
+                    seen_iso = self._get_cached_last_seen_online_iso(name) if str(state).strip().lower() == "offline" else None
+
+                secondary, color = self._fav_status_presentation(state, off_iso, seen_iso, None)
 
                 try:
                     item = TwoLineIconListItem(text=name, secondary_text=secondary)
@@ -2607,10 +2981,39 @@ class TibiaToolsApp(MDApp):
                     item = self._fav_items.get(key)
                     if not item:
                         continue
-                    state = None if force else self._get_cached_fav_status(name)
-                    last_iso = self._get_cached_fav_last_login_iso(name) if str(state).strip().lower() == "offline" else None
-                    seen_iso = self._get_cached_last_seen_online_iso(name) if str(state).strip().lower() == "offline" else None
-                    secondary, color = self._fav_status_presentation(state, seen_iso, last_iso)
+                    svc = service_last.get(key) if isinstance(service_last, dict) else None
+                    use_svc = bool(isinstance(svc, dict) and self._service_entry_is_fresh(svc, max_age_s=90))
+
+                    if use_svc:
+                        is_on = bool(svc.get("online"))
+                        state = "online" if is_on else "offline"
+                        off_iso = None if is_on else (svc.get("offline_since_iso") if isinstance(svc.get("offline_since_iso"), str) else None)
+                        seen_iso = (svc.get("last_seen_online_iso") if isinstance(svc.get("last_seen_online_iso"), str) else None)
+                        try:
+                            if not hasattr(self, "_fav_status_cache"):
+                                self._fav_status_cache = {}
+                            self._fav_status_cache[key] = state
+                            self._cache_set(f"fav_status:{key}", state)
+                        except Exception:
+                            pass
+                        try:
+                            if state == "online":
+                                self._set_cached_offline_since_iso(name, None)
+                            elif off_iso:
+                                self._set_cached_offline_since_iso(name, off_iso)
+                        except Exception:
+                            pass
+                        try:
+                            if is_on and seen_iso:
+                                self._set_cached_last_seen_online_iso(name, seen_iso)
+                        except Exception:
+                            pass
+                    else:
+                        state = None if force else self._get_cached_fav_status(name)
+                        off_iso = self._get_cached_offline_since_iso(name) if str(state).strip().lower() == "offline" else None
+                        seen_iso = self._get_cached_last_seen_online_iso(name) if str(state).strip().lower() == "offline" else None
+
+                    secondary, color = self._fav_status_presentation(state, off_iso, seen_iso, None)
                     item.secondary_text = secondary
                     item.secondary_text_color = color
                 except Exception:
@@ -2620,6 +3023,12 @@ class TibiaToolsApp(MDApp):
         names_to_check: list[str] = []
         for name in names:
             try:
+                # Se o serviço acabou de atualizar, não precisamos refazer requests.
+                k = (name or "").strip().lower()
+                svc = service_last.get(k) if isinstance(service_last, dict) else None
+                if isinstance(svc, dict) and self._service_entry_is_fresh(svc, max_age_s=90) and not force:
+                    continue
+
                 state = None if force else self._get_cached_fav_status(name)
                 if force or state is None or self._fav_status_needs_refresh(name, ttl_seconds=45):
                     names_to_check.append(name)
@@ -2775,6 +3184,7 @@ class TibiaToolsApp(MDApp):
     def _fav_status_presentation(
         self,
         state,
+        offline_since_iso: Optional[str] = None,
         last_seen_online_iso: Optional[str] = None,
         fallback_last_login_iso: Optional[str] = None,
     ) -> tuple[str, tuple]:
@@ -2783,7 +3193,7 @@ class TibiaToolsApp(MDApp):
             return "Online", (0.2, 0.75, 0.35, 1)
         if s == "offline" or state is False:
             extra = ""
-            iso = last_seen_online_iso or fallback_last_login_iso
+            iso = offline_since_iso or last_seen_online_iso or fallback_last_login_iso
             if iso:
                 try:
                     dt = datetime.fromisoformat(str(iso).strip())
@@ -2800,6 +3210,7 @@ class TibiaToolsApp(MDApp):
         self,
         name: str,
         state,
+        offline_since_iso: Optional[str] = None,
         last_seen_online_iso: Optional[str] = None,
         fallback_last_login_iso: Optional[str] = None,
     ) -> None:
@@ -2812,19 +3223,25 @@ class TibiaToolsApp(MDApp):
             if not key:
                 return
 
-            # ONLINE: atualiza o "last seen online" (usado para calcular há quanto tempo ficou OFF)
-            if str(state).strip().lower() == "online":
+            st_low = str(state).strip().lower()
+
+            # ONLINE: atualiza o "last seen online" e limpa o offline_since
+            if st_low == "online":
                 try:
                     now_iso = last_seen_online_iso or datetime.utcnow().isoformat()
                     self._set_cached_last_seen_online_iso(name, now_iso)
                 except Exception:
                     pass
 
-            # OFFLINE: mantém o last_seen_online (última vez que vimos online).
-            # Se nunca vimos online, guardamos um fallback (Last Login) só para não ficar vazio.
-            if str(state).strip().lower() == "offline" and fallback_last_login_iso:
                 try:
-                    self._set_cached_fav_last_login_iso(name, str(fallback_last_login_iso).strip())
+                    self._set_cached_offline_since_iso(name, None)
+                except Exception:
+                    pass
+
+            # OFFLINE: usa offline_since se fornecido (preferível a "Last Login").
+            if st_low == "offline" and offline_since_iso:
+                try:
+                    self._set_cached_offline_since_iso(name, str(offline_since_iso).strip())
                 except Exception:
                     pass
 
@@ -2838,13 +3255,11 @@ class TibiaToolsApp(MDApp):
             if not item:
                 return
 
+            off_since = offline_since_iso or self._get_cached_offline_since_iso(name)
             seen = last_seen_online_iso or self._get_cached_last_seen_online_iso(name)
 
-            fb = None
-            if not seen:
-                fb = fallback_last_login_iso or self._get_cached_fav_last_login_iso(name)
-
-            label, color = self._fav_status_presentation(state, seen, fb)
+            # Para Favoritos, evitamos usar "Last Login" como fallback porque não representa logout.
+            label, color = self._fav_status_presentation(state, off_since, seen, None)
             item.secondary_text = label
             item.secondary_text_color = color
         except Exception:
@@ -2938,8 +3353,8 @@ class TibiaToolsApp(MDApp):
                 return
             for u in updates:
                 try:
-                    name, st, seen_iso, fallback_login_iso = u
-                    self._set_fav_item_status(name, st, seen_iso, fallback_login_iso)
+                    name, st, off_iso, seen_iso = u
+                    self._set_fav_item_status(name, st, off_iso, seen_iso, None)
                 except Exception:
                     continue
         except Exception:
@@ -2954,6 +3369,7 @@ class TibiaToolsApp(MDApp):
         Otimização: calcula tudo em background e aplica numa única chamada no thread principal.
         """
         try:
+            # (name, status, offline_since_iso, last_seen_online_iso)
             updates: list[tuple[str, str, Optional[str], Optional[str]]] = []
 
             # 1) resolve world de cada char (cache -> TibiaData /v4/character)
@@ -2991,25 +3407,24 @@ class TibiaToolsApp(MDApp):
                     is_on = (n or "").strip().lower() in online_set
                     st = "online" if is_on else "offline"
 
-                    # Para "há quanto tempo está off": usamos o último instante em que o app confirmou ONLINE.
                     seen_iso: Optional[str] = None
-                    fallback_login_iso: Optional[str] = None
+                    off_iso: Optional[str] = None
 
                     if st == "online":
                         seen_iso = datetime.utcnow().isoformat()
+                        off_iso = None
                     else:
                         seen_iso = self._get_cached_last_seen_online_iso(n)
-                        if not seen_iso:
-                            # Fallback: Last Login (menos preciso), apenas se nunca vimos online.
-                            fallback_login_iso = self._get_cached_fav_last_login_iso(n)
-                            if not fallback_login_iso:
-                                k = (n or "").strip().lower()
-                                if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
-                                    fallback_login_iso = self._fetch_last_login_iso_for_char(n)
-                                    if not fallback_login_iso:
-                                        self._cache_set(f"fav_last_login_fail:{k}", True)
+                        off_iso = self._get_cached_offline_since_iso(n)
+                        # Se antes estava ONLINE e agora OFFLINE, marca o instante do logout detectado.
+                        try:
+                            prev = str(self._get_cached_fav_status(n) or "").strip().lower()
+                            if prev == "online" and not off_iso:
+                                off_iso = datetime.utcnow().isoformat()
+                        except Exception:
+                            pass
 
-                    updates.append((n, st, seen_iso, fallback_login_iso))
+                    updates.append((n, st, off_iso, seen_iso))
 
             # 4) fallback (se não conseguimos world): tenta método antigo (tibia.com / endpoint do char)
             for n in unknown:
@@ -3023,21 +3438,21 @@ class TibiaToolsApp(MDApp):
                     st = getattr(self, "_fav_status_cache", {}).get(k) or "offline"
 
                 seen_iso: Optional[str] = None
-                fallback_login_iso: Optional[str] = None
+                off_iso: Optional[str] = None
                 if str(st).strip().lower() == "online":
                     seen_iso = datetime.utcnow().isoformat()
+                    off_iso = None
                 else:
                     seen_iso = self._get_cached_last_seen_online_iso(n)
-                    if not seen_iso:
-                        fallback_login_iso = self._get_cached_fav_last_login_iso(n)
-                        if not fallback_login_iso:
-                            k = (n or "").strip().lower()
-                            if not self._cache_get(f"fav_last_login_fail:{k}", ttl_seconds=600):
-                                fallback_login_iso = self._fetch_last_login_iso_for_char(n)
-                                if not fallback_login_iso:
-                                    self._cache_set(f"fav_last_login_fail:{k}", True)
+                    off_iso = self._get_cached_offline_since_iso(n)
+                    try:
+                        prev = str(self._get_cached_fav_status(n) or "").strip().lower()
+                        if prev == "online" and not off_iso:
+                            off_iso = datetime.utcnow().isoformat()
+                    except Exception:
+                        pass
 
-                updates.append((n, str(st), seen_iso, fallback_login_iso))
+                updates.append((n, str(st), off_iso, seen_iso))
 
             # aplica tudo de uma vez no thread principal
             Clock.schedule_once(lambda _dt, ups=updates: self._apply_fav_status_updates(ups, job_id), 0)
@@ -3779,8 +4194,31 @@ class TibiaToolsApp(MDApp):
     # Boosted
 
     # --------------------
-    def update_boosted(self, silent: bool = False):
+    def update_boosted(self, silent: bool = False, force: bool = False):
+        """Atualiza Boosted Creature/Boss sem travar a UI.
+
+        IMPORTANTE: em versões anteriores havia um loop de refresh que criava
+        threads infinitas e deixava o app lento. Aqui adicionamos:
+        - in-flight guard (não iniciar outro worker se já existe um rodando)
+        - throttling (em updates silenciosos, não fazer fetch em sequência)
+        """
         scr = self.root.get_screen("boosted")
+
+        # Evita disparar vários downloads em cascata (principal causa do "travamento")
+        now_mono = time.monotonic()
+        min_interval = 90.0 if silent else 0.0  # silencioso: no máx. ~1x por 90s
+        try:
+            with self._boosted_lock:
+                if self._boosted_inflight:
+                    return
+                if (not force) and min_interval and (now_mono - float(self._boosted_last_fetch_mono or 0.0) < min_interval):
+                    return
+                self._boosted_inflight = True
+                self._boosted_last_fetch_mono = now_mono
+        except Exception:
+            # se por algum motivo o lock falhar, ainda tentamos seguir
+            pass
+
         if not silent:
             scr.ids.boost_status.text = "Atualizando..."
         else:
@@ -3789,12 +4227,32 @@ class TibiaToolsApp(MDApp):
                 scr.ids.boost_status.text = "Atualizando..."
 
         def run():
+            data = None
+            err = None
             try:
                 data = fetch_boosted()
-                Clock.schedule_once(lambda *_: self._boosted_done(data, silent=silent), 0)
             except Exception as e:
-                if not silent:
-                    Clock.schedule_once(lambda *_: setattr(scr.ids.boost_status, "text", f"Erro: {e}"), 0)
+                err = e
+
+            def finish(*_):
+                # libera o in-flight guard SEMPRE (sucesso ou erro)
+                try:
+                    with self._boosted_lock:
+                        self._boosted_inflight = False
+                except Exception:
+                    pass
+
+                if err is not None:
+                    if not silent:
+                        try:
+                            scr.ids.boost_status.text = f"Erro: {err}"
+                        except Exception:
+                            pass
+                    return
+
+                self._boosted_done(data, silent=silent)
+
+            Clock.schedule_once(finish, 0)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -3888,46 +4346,141 @@ class TibiaToolsApp(MDApp):
         except Exception:
             pass
 
-        # atualiza dashboard
-        try:
-            self.dashboard_refresh()
-        except Exception:
-            pass
+        # NÃO chamar dashboard_refresh() aqui.
+        # O _boosted_done já atualiza diretamente os widgets do Dashboard e chamar
+        # dashboard_refresh() cria um ciclo indireto (e era a principal causa de
+        # travamentos/threads em cascata em Android).
 
     # --------------------
     # Training (Exercise)
     # --------------------
+    def _menu_fix_position(self, menu):
+        """Tenta manter dropdown dentro da tela (KivyMD 1.2)."""
+        try:
+            # Se disponível, força crescimento horizontal para a esquerda.
+            menu.hor_growth = "left"
+        except Exception:
+            pass
+        try:
+            menu.ver_growth = "down"
+        except Exception:
+            pass
+        try:
+            # Margem para evitar colar na borda.
+            menu.border_margin = dp(16)
+        except Exception:
+            pass
+
+    def _clamp_dropdown_to_window(self, menu, _tries: int = 3):
+        """Garante que o dropdown não fique fora da tela (extra p/ Android)."""
+        try:
+            from kivy.core.window import Window
+        except Exception:
+            return
+
+        try:
+            w = float(getattr(menu, "width", 0) or 0)
+            h = float(getattr(menu, "height", 0) or 0)
+        except Exception:
+            return
+
+        # Em alguns devices o size ainda não está pronto no mesmo frame.
+        if w <= 0 or h <= 0:
+            if _tries > 0:
+                Clock.schedule_once(lambda *_: self._clamp_dropdown_to_window(menu, _tries=_tries - 1), 0)
+            return
+
+        m = dp(8)
+        try:
+            menu.x = max(m, min(menu.x, Window.width - w - m))
+        except Exception:
+            pass
+        try:
+            menu.y = max(m, min(menu.y, Window.height - h - m))
+        except Exception:
+            pass
+
+    def training_open_menu(self, which: str):
+        """Abre menus do Treino sem deixar o menu/selection sair da tela."""
+        scr = self.root.get_screen("training")
+        self._ensure_training_menus()
+
+        # Evita o menu de contexto do Android (Select All / Paste) em campos readonly.
+        for _id in (
+            "skill_field",
+            "voc_field",
+            "weapon_field",
+            "from_level",
+            "percent_left",
+            "to_level",
+            "loyalty",
+        ):
+            w = scr.ids.get(_id)
+            if w is not None:
+                try:
+                    w.focus = False
+                except Exception:
+                    pass
+
+        menu = None
+        if which == "skill":
+            menu = self._menu_skill
+        elif which in ("voc", "vocation"):
+            menu = self._menu_vocation
+        elif which == "weapon":
+            menu = self._menu_weapon
+
+        if menu is None:
+            return
+
+        menu.open()
+        # Ajusta posição no próximo frame (quando o tamanho do menu já foi calculado).
+        Clock.schedule_once(lambda *_: self._clamp_dropdown_to_window(menu), 0)
+
     def _ensure_training_menus(self):
         scr = self.root.get_screen("training")
+
+        # ⚠️ Em telas menores, o dropdown pode "vazar" para fora da tela.
+        # Aqui o melhor caller é o botão de seta (menu-down) + hor_growth="left".
+        # Assim o menu cresce para a esquerda e fica visível.
+        skill_caller = scr.ids.get("skill_drop") or scr.ids.get("skill_field")
+        voc_caller = scr.ids.get("voc_drop") or scr.ids.get("voc_field")
+        weapon_caller = scr.ids.get("weapon_drop") or scr.ids.get("weapon_field")
 
         if self._menu_skill is None:
             skills = ["Sword", "Axe", "Club", "Distance", "Fist Fighting", "Shielding", "Magic Level"]
             self._menu_skill = MDDropdownMenu(
-                caller=scr.ids.skill_drop,
+                caller=skill_caller,
                 items=[{"text": s, "on_release": (lambda x=s: self._set_training_skill(x))} for s in skills],
                 width_mult=4,
                 max_height=dp(320),
+                position="auto",
             )
+            self._menu_fix_position(self._menu_skill)
 
         if 'voc_drop' in scr.ids and 'voc_field' in scr.ids:
             if self._menu_vocation is None:
                 vocs = ["Knight", "Paladin", "Sorcerer", "Druid", "Monk", "None"]
                 self._menu_vocation = MDDropdownMenu(
-                    caller=scr.ids.voc_drop,
+                    caller=voc_caller,
                     items=[{"text": v, "on_release": (lambda x=v: self._set_training_voc(x))} for v in vocs],
                     width_mult=4,
                     max_height=dp(260),
+                    position="auto",
                 )
+                self._menu_fix_position(self._menu_vocation)
 
         if 'weapon_drop' in scr.ids and 'weapon_field' in scr.ids:
             if self._menu_weapon is None:
                 weapons = ["Standard (500)", "Enhanced (1800)", "Lasting (14400)"]
                 self._menu_weapon = MDDropdownMenu(
-                    caller=scr.ids.weapon_drop,
+                    caller=weapon_caller,
                     items=[{"text": w, "on_release": (lambda x=w: self._set_training_weapon(x))} for w in weapons],
                     width_mult=4,
                     max_height=dp(260),
+                    position="auto",
                 )
+                self._menu_fix_position(self._menu_weapon)
 
     def _set_training_skill(self, skill: str):
         scr = self.root.get_screen("training")

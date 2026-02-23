@@ -12,11 +12,13 @@ def _default_state() -> Dict[str, Any]:
     return {
         "favorites": [],
         # background monitor
-        "interval_seconds": 60,
+        # default 30s: melhora a precisão do ONLINE/OFFLINE e do tempo "há..."
+        "interval_seconds": 30,
         "monitoring": True,
         "notify_fav_online": True,
         "notify_fav_death": True,
         "notify_fav_level": True,
+        "autostart_on_boot": True,
         # caches / last seen (persist across restarts to avoid spam)
         "worlds": {},  # lower(name) -> world
         "last": {},    # lower(name) -> {"online": bool, "level": int, "death_time": str}
