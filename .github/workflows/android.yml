@@ -144,9 +144,35 @@ jobs:
           python -m pip install --upgrade pip wheel setuptools
           python -m pip install --upgrade buildozer Cython==0.29.36
 
+
+      - name: Prefetch p4a sources (avoid 502)
+        run: |
+          set -e
+          PKG_DIR="$HOME/.buildozer/android/packages"
+          mkdir -p "$PKG_DIR"
+          cd "$PKG_DIR"
+
+          # Freetype (Kivy/SDL2 dependency) - Savannah can return 502 sometimes, so use a mirror.
+          if [ ! -f "freetype-2.10.1.tar.gz" ]; then
+            echo "Downloading freetype-2.10.1.tar.gz to $PKG_DIR ..."
+            URLS=(
+              "https://download.sourceforge.net/project/freetype/freetype2/2.10.1/freetype-2.10.1.tar.gz"
+              "https://downloads.sourceforge.net/project/freetype/freetype2/2.10.1/freetype-2.10.1.tar.gz"
+              "https://download.savannah.gnu.org/releases/freetype/freetype-2.10.1.tar.gz"
+            )
+            for u in "${URLS[@]}"; do
+              echo "  -> $u"
+              if curl -fL --retry 10 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o freetype-2.10.1.tar.gz "$u"; then
+                break
+              fi
+            done
+          fi
+
+          ls -lh freetype-2.10.1.tar.gz
       - name: Build APK (debug)
         run: |
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          export CONFIG_SITE="$GITHUB_WORKSPACE/android/config.site"
           buildozer -v android debug
 
       - name: Upload APK artifact
