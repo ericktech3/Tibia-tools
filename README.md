@@ -8,19 +8,25 @@ App de utilidades para **Tibia** feito em **Kivy + KivyMD**, pensado para rodar 
 
 ## 📱 Funcionalidades
 
-### Aba **Char**
-- **Busca de personagem** (nome) usando **TibiaData v4**
-  - mostra informações principais do personagem na tela (ex.: world, vocation, level e status quando disponível).
-- **Abrir no Tibia.com** (link direto do personagem).
-- **Favoritar** o personagem (para aparecer na aba Favoritos).
-- **Calculadora de Shared XP**
-  - informa o range de level que pode fazer party share (⌈2/3⌉ até ⌊3/2⌋ do seu level).
+### 🔎 Busca de personagem
+- Consulta dados do personagem via **TibiaData API**
+- Exibe status **ONLINE/OFFLINE** de forma mais confiável (quando possível) usando a lista de players online do **world**
+- Mostra **Outros personagens visíveis na conta** (se o dono do personagem permitir no Tibia.com)
+  - Toque em um nome para buscar automaticamente
 
-### Aba **Favoritos**
-- Lista dos personagens favoritados.
-- Ao tocar em um favorito:
-  - **ABRIR** no Tibia.com
-  - **REMOVER** da lista
+### ⭐ Favoritos + Monitor em segundo plano
+- Adicione personagens aos favoritos
+- **Monitoramento em segundo plano** (Foreground Service com notificação fixa — exigência do Android)
+- Notificações quando:
+  - personagem fica online/offline
+  - mudanças relevantes detectadas (dependendo das opções)
+- Intervalo configurável (padrão recomendado: **30s**)
+
+
+### 📈 XP / Histórico (quando disponível)
+- Exibe informações de XP/histórico quando a fonte estiver acessível
+- Se a fonte de histórico estiver bloqueada/indisponível (anti-bot), o app não trava: apenas não preenche os dados extras
+---
 
 ### Aba **Mais**
 
@@ -81,6 +87,27 @@ Regras consideradas:
   - **Loot**
   - **Supplies**
   - **Balance**
+
+---
+
+## 📲 Instalação (usuário final)
+
+- Baixe o APK (quando publicado) e instale no Android.
+- No Android 13+ (API 33+), conceda permissão de **Notificações** para o monitor funcionar bem.
+
+> Dica: se seu Android for agressivo com bateria (Xiaomi/Realme/Samsung), desative otimizações de bateria para o app para evitar que o sistema mate o serviço.
+
+---
+
+## ⚙️ Configurações importantes
+
+Dentro do app (Configurações):
+- ✅ **Monitorar favoritos**: mantém o serviço rodando em segundo plano
+- ✅ **Iniciar automaticamente ao ligar** *(se habilitado no projeto)*: reinicia o serviço após reboot (depende do receiver)
+- ⏱️ **Intervalo de verificação**: recomendado **30s** para “offline há X” ficar bem preciso
+
+### Sobre “Offline há X”
+O tempo “Offline há X” é calculado com base no instante em que o **monitor detecta a transição ONLINE → OFFLINE** (mais fiel ao logout real), e não por “Last Login”.
 
 ---
 
