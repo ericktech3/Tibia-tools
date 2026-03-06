@@ -1,0 +1,85 @@
+<HuntScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Hunt Analyzer"
+            left_action_items: [["arrow-left", lambda x: app.back_home()]]
+            elevation: 2
+
+        MDScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Entrada"
+
+                        HintText:
+                            text: "Cole aqui o texto do Session Data do Tibia."
+
+                        MDTextField:
+                            id: hunt_input
+                            hint_text: "Session Data"
+                            mode: "rectangle"
+                            multiline: True
+                            size_hint_y: None
+                            height: dp(220)
+
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Analisar"
+                                on_release: app.hunt_parse()
+
+                ActionRow:
+                    MDRaisedButton:
+                        id: hunt_copy_btn
+                        text: "Copiar"
+                        on_release: app.hunt_copy()
+
+                    MDRectangleFlatIconButton:
+                        icon: "share-variant"
+                        text: "Compartilhar"
+                        on_release: app.hunt_share()
+
+                HintText:
+                    id: hunt_status
+                    text: ""
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Resultado"
+
+                        MDTextField:
+                            id: hunt_output
+                            hint_text: "Resultado"
+                            mode: "rectangle"
+                            multiline: True
+                            readonly: True
+                            size_hint_y: None
+                            height: dp(260)
+

@@ -1,0 +1,44 @@
+<BossFavoritesScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Bosses Favoritos"
+            left_action_items: [["arrow-left", lambda x: app.go('bosses')]]
+            right_action_items: [["refresh", lambda x: app.boss_favorites_refresh()]]
+            elevation: 2
+
+        MDScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                HintText:
+                    id: boss_fav_status
+                    text: "Favoritos: -"
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Lista"
+
+                        MDSeparator:
+                            height: dp(1)
+
+                        MDList:
+                            id: boss_fav_list
+                            size_hint_y: None
+                            height: self.minimum_height

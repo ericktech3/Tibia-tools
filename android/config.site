@@ -1,0 +1,16 @@
+# Força resultados de detecção do configure do CPython durante cross-compile Android.
+# Evita tentar compilar/extensões que não existem no Android (ou dependem de libs externas)
+# e impede que o configure marque funções como existentes apenas por linkar sem protótipo.
+
+# grp module: getgrent/setgrent/endgrent não são confiáveis no Android (protótipos ausentes)
+ac_cv_func_getgrent=no
+ac_cv_func_setgrent=no
+ac_cv_func_endgrent=no
+
+# _lzma (liblzma/xz) - desativa se não estiver fornecido por recipe
+ac_cv_header_lzma_h=no
+
+# _uuid (libuuid) - desativa se não estiver fornecido por recipe
+ac_cv_lib_uuid_uuid_generate=no
+ac_cv_header_uuid_h=no
+ac_cv_header_uuid_uuid_h=no

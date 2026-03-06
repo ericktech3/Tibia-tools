@@ -1,0 +1,140 @@
+<BossesScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Bosses (ExevoPan)"
+            left_action_items: [["arrow-left", lambda x: app.back_home()]]
+            elevation: 2
+
+        MDScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "World"
+
+                        MDBoxLayout:
+                            id: world_row
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: world_field
+                                hint_text: "World"
+                                mode: "rectangle"
+
+                            MDIconButton:
+                                id: world_drop
+                                icon: "menu-down"
+                                on_release:
+                                    app.open_world_menu()
+
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Buscar"
+                                on_release: app.bosses_fetch()
+
+                            MDRectangleFlatIconButton:
+                                icon: "star-box-multiple-outline"
+                                text: "Favoritos"
+                                on_release: app.open_boss_favorites()
+
+                        HintText:
+                            id: boss_status
+                            text: ""
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Filtros"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: boss_search
+                                hint_text: "Buscar boss..."
+                                mode: "rectangle"
+                                on_text: app.bosses_apply_filters_debounced()
+
+                            MDIconButton:
+                                id: boss_filter_btn
+                                icon: "filter-variant"
+                                on_release: app.open_boss_filter_menu()
+
+                            MDIconButton:
+                                id: boss_sort_btn
+                                icon: "sort"
+                                on_release: app.open_boss_sort_menu()
+
+                            MDIconButton:
+                                id: boss_fav_toggle
+                                icon: "star-outline"
+                                on_release: app.bosses_toggle_fav_only()
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(22)
+                            spacing: dp(12)
+
+                            MDLabel:
+                                id: boss_filter_label
+                                text: "All"
+                                theme_text_color: "Hint"
+                                size_hint_x: .5
+
+                            MDLabel:
+                                id: boss_sort_label
+                                text: "Chance"
+                                theme_text_color: "Hint"
+                                halign: "right"
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Lista"
+
+                        MDSeparator:
+                            height: dp(1)
+
+                        MDList:
+                            id: boss_list
+                            size_hint_y: None
+                            height: self.minimum_height
+

@@ -1,0 +1,216 @@
+<SettingsScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Configurações"
+            left_action_items: [["arrow-left", lambda x: app.back_home()]]
+            elevation: 2
+
+        MDScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Aparência"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Tema claro"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_theme_light
+                                active: False
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Notificações (ao abrir o app)"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Boosted mudou"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_notify_boosted
+                                active: False
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Boss favorito High"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_notify_boss_high
+                                active: False
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Favoritos (segundo plano)"
+
+                        HintText:
+                            text: "Notificações mesmo com o app fechado. Isso roda como serviço em primeiro plano (pode aparecer um aviso fixo do Android)."
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Monitorar favoritos"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_monitor
+                                active: True
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Iniciar automaticamente ao ligar"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_autostart
+                                active: True
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Avisar quando ficar online"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_notify_online
+                                active: True
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Avisar quando upar level"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_notify_level
+                                active: True
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Avisar quando morrer"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: set_bg_notify_death
+                                active: True
+
+                        MDTextField:
+                            id: set_bg_interval
+                            hint_text: "Intervalo do monitor (segundos) - ex: 30"
+                            text: "30"
+                            mode: "rectangle"
+                            input_filter: "int"
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Updates (GitHub)"
+
+                        MDTextField:
+                            id: set_repo_url
+                            hint_text: "URL do repo (ex: https://github.com/user/repo)"
+                            mode: "rectangle"
+
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Salvar"
+                                on_release: app.settings_save()
+
+                            MDRectangleFlatIconButton:
+                                icon: "cloud-download-outline"
+                                text: "Checar"
+                                on_release: app.settings_check_updates()
+
+                        ActionRow:
+                            MDRectangleFlatIconButton:
+                                icon: "github"
+                                text: "Releases"
+                                on_release: app.settings_open_releases()
+
+                            MDRectangleFlatIconButton:
+                                icon: "broom"
+                                text: "Limpar cache"
+                                on_release: app.settings_clear_cache()
+
+                        HintText:
+                            id: set_status
+                            text: ""
+
+

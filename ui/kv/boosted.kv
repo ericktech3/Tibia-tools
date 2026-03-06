@@ -1,0 +1,135 @@
+<BoostedScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Boosted"
+            left_action_items: [["arrow-left", lambda x: app.back_home()]]
+            right_action_items: [["refresh", lambda x: app.update_boosted()]]
+            elevation: 2
+
+        MDScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                HintText:
+                    id: boost_status
+                    text: ""
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: dp(12)
+                    size_hint_y: None
+                    height: dp(138)
+
+                    AppCard:
+                        size_hint_x: 0.5
+                        size_hint_y: None
+                        height: dp(138)
+
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: dp(10)
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            SectionTitle:
+                                text: "Criatura Boosted"
+
+                            MDBoxLayout:
+                                orientation: "horizontal"
+                                spacing: dp(10)
+                                size_hint_y: None
+                                height: dp(64)
+
+                                AnchorLayout:
+                                    size_hint: None, None
+                                    size: dp(64), dp(64)
+                                    anchor_x: "center"
+                                    anchor_y: "center"
+
+                                    AsyncImage:
+                                        id: boost_creature_sprite
+                                        source: ""
+                                        size_hint: None, None
+                                        size: dp(56), dp(56)
+                                        allow_stretch: True
+                                        keep_ratio: True
+                                        opacity: 1 if self.source else 0
+
+                                MDLabel:
+                                    id: boost_creature
+                                    text: "-"
+                                    valign: "middle"
+                                    halign: "left"
+                                    text_size: self.size
+
+                    AppCard:
+                        size_hint_x: 0.5
+                        size_hint_y: None
+                        height: dp(138)
+
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: dp(10)
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            SectionTitle:
+                                text: "Boss Boosted"
+
+                            MDBoxLayout:
+                                orientation: "horizontal"
+                                spacing: dp(10)
+                                size_hint_y: None
+                                height: dp(64)
+
+                                AnchorLayout:
+                                    size_hint: None, None
+                                    size: dp(64), dp(64)
+                                    anchor_x: "center"
+                                    anchor_y: "center"
+
+                                    AsyncImage:
+                                        id: boost_boss_sprite
+                                        source: ""
+                                        size_hint: None, None
+                                        size: dp(56), dp(56)
+                                        allow_stretch: True
+                                        keep_ratio: True
+                                        opacity: 1 if self.source else 0
+
+                                MDLabel:
+                                    id: boost_boss
+                                    text: "-"
+                                    valign: "middle"
+                                    halign: "left"
+                                    text_size: self.size
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Histórico (7 dias)"
+
+                        MDSeparator:
+                            height: dp(1)
+
+                        MDList:
+                            id: boost_hist_list
+                            size_hint_y: None
+                            height: self.minimum_height
+

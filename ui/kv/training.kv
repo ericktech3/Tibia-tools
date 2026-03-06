@@ -1,0 +1,196 @@
+<TrainingScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Treino (Exercise)"
+            left_action_items: [["arrow-left", lambda x: app.back_home()]]
+            elevation: 2
+
+        MDScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Configuração"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: skill_field
+                                hint_text: "Skill"
+                                text: "Sword"
+                                mode: "rectangle"
+                                readonly: True
+
+                            MDIconButton:
+                                id: skill_drop
+                                icon: "menu-down"
+                                on_release: app.training_open_menu("skill")
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: voc_field
+                                hint_text: "Vocação"
+                                text: "Knight"
+                                mode: "rectangle"
+                                readonly: True
+
+                            MDIconButton:
+                                id: voc_drop
+                                icon: "menu-down"
+                                on_release: app.training_open_menu("voc")
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: weapon_field
+                                hint_text: "Arma de treino"
+                                text: "Enhanced (1800)"
+                                mode: "rectangle"
+                                readonly: True
+
+                            MDIconButton:
+                                id: weapon_drop
+                                icon: "menu-down"
+                                on_release: app.training_open_menu("weapon")
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Níveis"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: from_level
+                                hint_text: "De"
+                                mode: "rectangle"
+                                input_filter: "int"
+
+                            MDTextField:
+                                id: percent_left
+                                hint_text: "% restante (1-100)"
+                                mode: "rectangle"
+                                input_filter: "float"
+                                text: "100"
+
+                            MDTextField:
+                                id: to_level
+                                hint_text: "Até"
+                                mode: "rectangle"
+                                input_filter: "int"
+
+                        MDTextField:
+                            id: loyalty
+                            hint_text: "Loyalty (%) (0-50)"
+                            mode: "rectangle"
+                            input_filter: "float"
+                            text: "0"
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Bônus"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Private dummy (+10%)"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: private_dummy
+                                active: False
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(48)
+                            spacing: dp(10)
+
+                            MDLabel:
+                                text: "Double event (x2)"
+                                valign: "middle"
+
+                            MDSwitch:
+                                id: double_event
+                                active: False
+
+                ActionRow:
+                    MDRaisedButton:
+                        text: "Calcular"
+                        on_release: app.training_calculate()
+
+                HintText:
+                    id: train_status
+                    text: ""
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Resultado"
+
+                        MDLabel:
+                            id: train_result
+                            text: ""
+                            halign: "left"
+                            valign: "top"
+                            size_hint_y: None
+                            height: self.texture_size[1] + dp(20)
+

@@ -1,0 +1,90 @@
+<ImbuementsScreen@MDScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Imbuements (TibiaWiki)"
+            left_action_items: [["arrow-left", lambda x: app.back_home()]]
+            right_action_items: [["refresh", lambda x: app._imbuements_load()]]
+            elevation: 2
+
+        MDScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(12)
+                spacing: dp(12)
+                size_hint_y: None
+                height: self.minimum_height
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Filtros"
+
+                        MDBoxLayout:
+                            size_hint_y: None
+                            height: dp(44)
+                            spacing: dp(8)
+
+                            MDIconButton:
+                                id: imb_tier_btn
+                                icon: "tag-outline"
+                                on_release: app.open_imb_tier_menu()
+
+                            MDLabel:
+                                id: imb_tier_label
+                                text: "All"
+                                theme_text_color: "Hint"
+                                size_hint_x: None
+                                width: dp(60)
+
+                            MDIconButton:
+                                id: imb_fav_toggle
+                                icon: "star-outline"
+                                on_release: app.imbuements_toggle_fav_only()
+
+                            MDIconButton:
+                                icon: "content-copy"
+                                on_release: app.imbuements_copy_selected_hint()
+
+                        MDTextField:
+                            id: imb_search
+                            hint_text: "Buscar (ex: Vampirism, Strike...)"
+                            mode: "rectangle"
+                            on_text: app.imbuements_refresh_list()
+
+                        HintText:
+                            id: imb_status
+                            text: "Toque em refresh para carregar."
+
+                AppCard:
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        SectionTitle:
+                            text: "Lista"
+
+                        MDSeparator:
+                            height: dp(1)
+
+                        MDList:
+                            id: imb_list
+                            size_hint_y: None
+                            height: self.minimum_height
+

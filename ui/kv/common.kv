@@ -1,0 +1,38 @@
+#:import dp kivy.metrics.dp
+
+# ---------- UI defaults (polish) ----------
+<MDCard>:
+    radius: [dp(16), dp(16), dp(16), dp(16)]
+    elevation: 1
+
+<MDRaisedButton>:
+    size_hint_y: None
+    height: dp(44)
+
+<AppCard@MDCard>:
+    padding: dp(14)
+    radius: [dp(18), dp(18), dp(18), dp(18)]
+    elevation: 1
+
+<SectionTitle@MDLabel>:
+    font_style: "Subtitle1"
+    bold: True
+    size_hint_y: None
+    height: self.texture_size[1] + dp(8)
+
+<HintText@MDLabel>:
+    theme_text_color: "Hint"
+    font_style: "Caption"
+    size_hint_y: None
+    height: self.texture_size[1] + dp(6)
+
+<ActionRow@MDBoxLayout>:
+    size_hint_y: None
+    height: dp(44)
+    spacing: dp(10)
+
+<MoreItem>:
+    icon: "chevron-right"
+    IconLeftWidget:
+        icon: root.icon
+

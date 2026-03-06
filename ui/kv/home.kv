@@ -1,0 +1,575 @@
+<HomeScreen@MDScreen>:
+    char_last_url: ""
+
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "Tibia Tools"
+            elevation: 2
+
+        MDBottomNavigation:
+            id: bottom_nav
+            panel_color: app.theme_cls.bg_normal
+
+
+            MDBottomNavigationItem:
+                name: "tab_dashboard"
+                text: "Home"
+                icon: "home"
+
+                MDScrollView:
+                    do_scroll_x: False
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        MDCard:
+                            padding: dp(12)
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(6)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                MDBoxLayout:
+                                    size_hint_y: None
+                                    height: dp(36)
+
+                                    MDLabel:
+                                        text: "Boosted hoje"
+                                        bold: True
+
+                                    MDIconButton:
+                                        icon: "refresh"
+                                        on_release: app.dashboard_refresh()
+
+                                ClickableRow:
+                                    orientation: "horizontal"
+                                    spacing: dp(10)
+                                    size_hint_y: None
+                                    height: dp(56)
+                                    on_release: app.open_boosted_from_home("creature")
+                                    AnchorLayout:
+                                        size_hint: None, None
+                                        size: dp(56), dp(56)
+                                        anchor_x: "center"
+                                        anchor_y: "center"
+                                        AsyncImage:
+                                            id: dash_boost_creature_sprite
+                                            source: ""
+                                            size_hint: None, None
+                                            size: dp(48), dp(48)
+                                            allow_stretch: True
+                                            keep_ratio: True
+                                            opacity: 1 if self.source else 0
+                                    MDLabel:
+                                        id: dash_boost_creature
+                                        text: "-"
+                                        valign: "middle"
+                                        halign: "left"
+                                        text_size: self.size
+
+                                ClickableRow:
+                                    orientation: "horizontal"
+                                    spacing: dp(10)
+                                    size_hint_y: None
+                                    height: dp(56)
+                                    on_release: app.open_boosted_from_home("boss")
+                                    AnchorLayout:
+                                        size_hint: None, None
+                                        size: dp(56), dp(56)
+                                        anchor_x: "center"
+                                        anchor_y: "center"
+                                        AsyncImage:
+                                            id: dash_boost_boss_sprite
+                                            source: ""
+                                            size_hint: None, None
+                                            size: dp(48), dp(48)
+                                            allow_stretch: True
+                                            keep_ratio: True
+                                            opacity: 1 if self.source else 0
+                                    MDLabel:
+                                        id: dash_boost_boss
+                                        text: "-"
+                                        valign: "middle"
+                                        halign: "left"
+                                        text_size: self.size
+
+                                MDLabel:
+                                    id: dash_boost_updated
+                                    text: ""
+                                    theme_text_color: "Hint"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(6)
+
+                        MDCard:
+                            padding: dp(12)
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(6)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                MDBoxLayout:
+                                    size_hint_y: None
+                                    height: dp(36)
+
+                                    MDLabel:
+                                        text: "Último char"
+                                        bold: True
+
+                                    MDIconButton:
+                                        icon: "account-search"
+                                        on_release: app.select_home_tab("tab_char")
+
+                                MDLabel:
+                                    id: dash_last_char
+                                    text: "-"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(6)
+
+                                MDRaisedButton:
+                                    text: "Abrir último no Tibia.com"
+                                    on_release: app.dashboard_open_last_char()
+
+                        MDCard:
+                            padding: dp(12)
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(6)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                MDBoxLayout:
+                                    size_hint_y: None
+                                    height: dp(36)
+
+                                    MDLabel:
+                                        text: "Bosses favoritos (High)"
+                                        bold: True
+
+                                    MDIconButton:
+                                        icon: "skull"
+                                        on_release: app.open_more_target("bosses")
+
+                                MDLabel:
+                                    id: dash_boss_hint
+                                    text: "Configure favoritos na tela Bosses."
+                                    theme_text_color: "Hint"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(6)
+
+                                MDList:
+                                    id: dash_boss_list
+
+            MDBottomNavigationItem:
+                name: "tab_char"
+                text: "Char"
+                icon: "account-search"
+
+                MDScrollView:
+                    do_scroll_x: False
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: self.minimum_height
+                        adaptive_height: True
+
+                        MDBoxLayout:
+                            id: world_row
+                            size_hint_y: None
+                            height: dp(56)
+                            spacing: dp(8)
+
+                            MDTextField:
+                                id: char_name
+                                hint_text: "Nome do personagem"
+                                mode: "rectangle"
+                                multiline: False
+                                on_text_validate: app.search_character()
+
+                            MDIconButton:
+                                icon: "history"
+                                on_release: app.open_char_history_menu()
+
+                            MDIconButton:
+                                icon: "close"
+                                on_release: app.clear_char_search()
+
+                        ActionRow:
+                            MDRaisedButton:
+                                text: "Buscar"
+                                on_release: app.search_character()
+
+                            MDRectangleFlatIconButton:
+                                icon: "open-in-new"
+                                text: "Tibia.com"
+                                on_release: app.open_last_in_browser()
+
+                            MDRectangleFlatIconButton:
+                                icon: "star-plus-outline"
+                                text: "Favoritar"
+                                on_release: app.add_current_to_favorites()
+
+                        MDCard:
+                            id: char_result_card
+                            orientation: "vertical"
+                            padding: dp(12)
+                            spacing: dp(6)
+                            size_hint_y: None
+                            height: self.minimum_height
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+
+                            MDBoxLayout:
+                                orientation: "horizontal"
+                                size_hint_y: None
+                                height: self.minimum_height
+                                spacing: dp(8)
+
+                                MDLabel:
+                                    id: char_title
+                                    text: "Faça uma busca"
+                                    font_style: "H6"
+                                    bold: True
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(4)
+
+                                MDLabel:
+                                    id: char_badge
+                                    text: ""
+                                    markup: True
+                                    halign: "right"
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(4)
+
+                            MDSeparator:
+                                height: dp(1)
+
+                            MDList:
+                                id: char_details_list
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                OneLineIconListItem:
+                                    text: "Digite o nome e toque em Buscar."
+                                    IconLeftWidget:
+                                        icon: "information-outline"
+
+                        MDCard:
+                            id: char_xp_card
+                            orientation: "vertical"
+                            padding: dp(12)
+                            spacing: dp(6)
+                            size_hint_y: None
+                            height: self.minimum_height
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+
+                            MDBoxLayout:
+                                size_hint_y: None
+                                height: dp(32)
+                                spacing: dp(6)
+
+                                MDLabel:
+                                    text: "XP últimos 30 dias"
+                                    font_style: "Subtitle1"
+                                    bold: True
+
+                                Widget:
+                                    size_hint_x: 1
+
+                                MDIconButton:
+                                    icon: "open-in-new"
+                                    on_release: app.open_char_xp_source()
+
+                            MDSeparator:
+                                height: dp(1)
+
+                            MDLabel:
+                                id: char_xp_total
+                                text: "—"
+                                theme_text_color: "Hint"
+                                size_hint_y: None
+                                height: self.texture_size[1] + dp(6)
+
+                            MDList:
+                                id: char_xp_list
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                OneLineIconListItem:
+                                    text: "Faça uma busca para ver o histórico."
+                                    IconLeftWidget:
+                                        icon: "chart-line"
+
+                        MDCard:
+                            id: char_deaths_card
+                            orientation: "vertical"
+                            padding: dp(12)
+                            spacing: dp(6)
+                            size_hint_y: None
+                            height: self.minimum_height
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+
+                            MDBoxLayout:
+                                size_hint_y: None
+                                height: dp(32)
+                                spacing: dp(6)
+
+                                MDLabel:
+                                    text: "Últimas mortes"
+                                    font_style: "Subtitle1"
+                                    bold: True
+
+                                Widget:
+                                    size_hint_x: 1
+
+                                MDIconButton:
+                                    icon: "content-copy"
+                                    on_release: app.copy_deaths_to_clipboard()
+
+                            MDSeparator:
+                                height: dp(1)
+
+                            MDList:
+                                id: char_deaths_list
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                OneLineIconListItem:
+                                    text: "Nenhuma informação ainda."
+                                    IconLeftWidget:
+                                        icon: "skull-outline"
+
+                        MDCard:
+                            id: char_account_card
+                            orientation: "vertical"
+                            padding: dp(12)
+                            spacing: dp(6)
+                            size_hint_y: None
+                            height: self.minimum_height
+                            radius: [dp(16), dp(16), dp(16), dp(16)]
+                            elevation: 1
+
+                            MDBoxLayout:
+                                size_hint_y: None
+                                height: dp(32)
+                                spacing: dp(6)
+
+                                MDLabel:
+                                    text: "Outros chars na conta"
+                                    font_style: "Subtitle1"
+                                    bold: True
+
+                            MDSeparator:
+                                height: dp(1)
+
+                            MDList:
+                                id: char_account_list
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                OneLineIconListItem:
+                                    text: "Faça uma busca para ver os outros personagens."
+                                    IconLeftWidget:
+                                        icon: "account-multiple"
+
+            MDBottomNavigationItem:
+                name: "tab_share"
+                text: "Share XP"
+                icon: "account-group"
+
+                MDScrollView:
+                    do_scroll_x: False
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
+                        size_hint_y: None
+                        height: self.minimum_height
+                        adaptive_height: True
+
+                        AppCard:
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(10)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                SectionTitle:
+                                    text: "Calculadora de Shared XP"
+
+                                HintText:
+                                    text: "Informe seu level e veja a faixa permitida para shared."
+
+                                MDTextField:
+                                    id: share_level
+                                    hint_text: "Seu level"
+                                    mode: "rectangle"
+                                    input_filter: "int"
+
+                                ActionRow:
+                                    MDRaisedButton:
+                                        text: "Calcular"
+                                        on_release: app.calc_shared_xp()
+
+                                MDLabel:
+                                    id: share_result
+                                    text: ""
+                                    halign: "left"
+                                    valign: "top"
+                                    text_size: self.width, None
+                                    size_hint_y: None
+                                    height: self.texture_size[1] + dp(20)
+
+
+            MDBottomNavigationItem:
+                name: "tab_fav"
+                text: "Favoritos"
+                icon: "star"
+
+                MDScrollView:
+                    do_scroll_x: False
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
+                        size_hint_y: None
+                        height: self.minimum_height
+                        adaptive_height: True
+
+                        AppCard:
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(10)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                MDBoxLayout:
+                                    size_hint_y: None
+                                    height: dp(36)
+
+                                    SectionTitle:
+                                        text: "Favoritos"
+
+                                    MDIconButton:
+                                        icon: "refresh"
+                                        on_release: app.refresh_favorites_list(force=True)
+
+                                HintText:
+                                    text: "Toque em um favorito para opções."
+
+                                MDSeparator:
+                                    height: dp(1)
+
+                                MDList:
+                                    id: fav_list
+                                    size_hint_y: None
+                                    height: self.minimum_height
+            MDBottomNavigationItem:
+                name: "tab_more"
+                text: "Mais"
+                icon: "dots-horizontal"
+
+                MDScrollView:
+                    do_scroll_x: False
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        padding: dp(12)
+                        spacing: dp(12)
+                        size_hint_y: None
+                        height: self.minimum_height
+                        adaptive_height: True
+
+                        AppCard:
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                spacing: dp(6)
+                                size_hint_y: None
+                                height: self.minimum_height
+
+                                SectionTitle:
+                                    text: "Ferramentas"
+
+                                MDSeparator:
+                                    height: dp(1)
+
+                                MDList:
+                                    MoreItem:
+                                        text: "Bosses (ExevoPan)"
+                                        icon: "skull"
+                                        on_release: app.open_more_target("bosses")
+                                    MoreItem:
+                                        text: "Boosted"
+                                        icon: "star-four-points"
+                                        on_release: app.open_more_target("boosted")
+                                    MoreItem:
+                                        text: "Treino (Exercise)"
+                                        icon: "dumbbell"
+                                        on_release: app.open_more_target("training")
+                                    MoreItem:
+                                        text: "Imbuements"
+                                        icon: "flash"
+                                        on_release: app.open_more_target("imbuements")
+                                    MoreItem:
+                                        text: "Stamina"
+                                        icon: "timer-outline"
+                                        on_release: app.open_more_target("stamina")
+                                    MoreItem:
+                                        text: "Hunt Analyzer"
+                                        icon: "chart-bar"
+                                        on_release: app.open_more_target("hunt")
+                                    MoreItem:
+                                        text: "Novidades"
+                                        icon: "new-box"
+                                        on_release: app.open_more_target("changelog")
+                                    MoreItem:
+                                        text: "Sobre"
+                                        icon: "information-outline"
+                                        on_release: app.open_more_target("about")
+                                    MoreItem:
+                                        text: "Feedback"
+                                        icon: "message-text"
+                                        on_release: app.open_more_target("feedback")
+                                    MoreItem:
+                                        text: "Configurações"
+                                        icon: "cog"
+                                        on_release: app.open_more_target("settings")
+
