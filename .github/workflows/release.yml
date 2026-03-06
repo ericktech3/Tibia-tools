@@ -1,0 +1,358 @@
+name: Build and Publish Android Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag da release (ex.: v0.1.0). Se vazio, usa a tag do evento.'
+        required: false
+        default: ''
+      publish_as_latest:
+        description: 'Marcar esta release como Latest'
+        required: true
+        default: true
+        type: boolean
+      draft:
+        description: 'Criar release como draft'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref_name || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests beautifulsoup4
+
+      - name: Compile Python files
+        run: |
+          python -m compileall \
+            main.py \
+            core \
+            features \
+            integrations \
+            repositories \
+            services \
+            service \
+            ui
+
+      - name: Check repository hygiene
+        run: |
+          python -m unittest tests.test_repo_hygiene -v
+
+      - name: Run unit tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m unittest discover -s tests -v
+
+  release:
+    needs: checks
+    runs-on: ubuntu-22.04
+
+    env:
+      ANDROID_SDK_ROOT: /home/runner/android-sdk
+      ANDROID_HOME: /home/runner/android-sdk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        env:
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+        run: |
+          if [ -n "$INPUT_TAG_NAME" ]; then
+            RELEASE_TAG="$INPUT_TAG_NAME"
+          else
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          fi
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "Tag de release não resolvida." >&2
+            exit 1
+          fi
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "Release tag: $RELEASE_TAG"
+
+      - name: Validate release tag against build version
+        run: |
+          python - <<'PY'
+          import os
+          from importlib.machinery import SourceFileLoader
+
+          mod = SourceFileLoader('release_meta', '.github/scripts/release_meta.py').load_module()
+          version = mod.read_buildozer_version('buildozer.spec')
+          mod.validate_release_tag(os.environ['RELEASE_TAG'], version)
+          print('buildozer version =', version)
+          print('release tag =', os.environ['RELEASE_TAG'])
+          print('normalized app version =', mod.normalize_release_tag(os.environ['RELEASE_TAG']))
+          PY
+
+      - name: Normalize build version for python-for-android
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          from importlib.machinery import SourceFileLoader
+
+          mod = SourceFileLoader('release_meta', '.github/scripts/release_meta.py').load_module()
+          app_version = mod.normalize_release_tag(os.environ['RELEASE_TAG'])
+          if not re.fullmatch(r'\d+(?:\.\d+)*', app_version):
+              raise SystemExit(f'versão normalizada inválida para buildozer/p4a: {app_version!r}')
+
+          spec = Path('buildozer.spec')
+          text = spec.read_text(encoding='utf-8', errors='ignore')
+          text, n = re.subn(r'(?m)^\s*version\s*=\s*([^\s#]+)\s*$', f'version = {app_version}', text, count=1)
+          if n != 1:
+              raise SystemExit('não foi possível atualizar a versão no buildozer.spec')
+          spec.write_text(text, encoding='utf-8')
+          print('buildozer.spec version ajustada para', app_version)
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git zip unzip curl gh \
+            autoconf automake libtool pkg-config cmake \
+            libffi-dev libssl-dev zlib1g-dev liblzma-dev \
+            libsqlite3-dev libgdbm-dev libreadline-dev libbz2-dev \
+            libncurses5-dev libncursesw5-dev libtinfo6 \
+            libjpeg-dev libpng-dev
+          sudo apt-get clean
+
+      - name: Install Android commandline-tools (sdkmanager) + legacy shim
+        run: |
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          cd /tmp
+          curl -sSLo cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf cmdline-tools
+          unzip -q cmdline-tools.zip
+          rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mv cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          mkdir -p "$ANDROID_SDK_ROOT/tools/bin"
+          ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
+          ln -sf "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" "$ANDROID_SDK_ROOT/tools/bin/avdmanager"
+          sdkmanager --version
+          "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --version
+
+      - name: Detect android.api from buildozer.spec (auto)
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('buildozer.spec')
+          txt = p.read_text(encoding='utf-8', errors='ignore')
+          m = re.search(r'(?m)^\s*android\.api\s*=\s*(\d+)\s*$', txt)
+          android_api = m.group(1) if m else '33'
+          with open('/home/runner/work/_temp/android_env', 'w') as f:
+              f.write(f'ANDROID_API={android_api}\n')
+          print('ANDROID_API =', android_api)
+          PY
+          cat /home/runner/work/_temp/android_env >> "$GITHUB_ENV"
+
+      - name: Accept licenses + install required SDK packages
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
+            'platform-tools' \
+            "platforms;android-${ANDROID_API}" \
+            'build-tools;33.0.2' \
+            'build-tools;36.1.0'
+
+      - name: Fix buildozer.spec (CRLF -> LF + força android.sdk_path)
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('buildozer.spec')
+          text = p.read_text(encoding='utf-8', errors='ignore')
+          text = text.replace('\r\n', '\n').replace('\r', '\n')
+
+          def set_key(section, key, value, text):
+              sec_pat = re.compile(rf'(?ms)^\[{re.escape(section)}\]\n(.*?)(?=^\[|\Z)')
+              m = sec_pat.search(text)
+              if not m:
+                  text = f'[{section}]\n\n' + text
+                  m = sec_pat.search(text)
+              body = m.group(1)
+              key_pat = re.compile(rf'(?m)^{re.escape(key)}\s*=.*$')
+              if key_pat.search(body):
+                  body2 = key_pat.sub(f'{key} = {value}', body)
+              else:
+                  body2 = body + f'\n{key} = {value}\n'
+              new_block = f'[{section}]\n' + body2
+              return text[:m.start()] + new_block + text[m.end():]
+
+          sdk_root = '/home/runner/android-sdk'
+          text = set_key('app', 'android.sdk_path', sdk_root, text)
+          p.write_text(text.strip() + '\n', encoding='utf-8')
+          print('buildozer.spec ajustado (LF + android.sdk_path).')
+          PY
+
+      - name: Install Buildozer
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          python -m pip install --upgrade buildozer Cython==0.29.36
+
+      - name: Prefetch p4a sources (avoid 502)
+        run: |
+          set -e
+          PKG_DIR="$HOME/.buildozer/android/packages"
+          mkdir -p "$PKG_DIR"
+          cd "$PKG_DIR"
+          if [ ! -f 'freetype-2.10.1.tar.gz' ]; then
+            echo 'Downloading freetype-2.10.1.tar.gz to' "$PKG_DIR"
+            URLS=(
+              'https://download.sourceforge.net/project/freetype/freetype2/2.10.1/freetype-2.10.1.tar.gz'
+              'https://downloads.sourceforge.net/project/freetype/freetype2/2.10.1/freetype-2.10.1.tar.gz'
+              'https://download.savannah.gnu.org/releases/freetype/freetype-2.10.1.tar.gz'
+            )
+            for u in "${URLS[@]}"; do
+              if curl -fL --retry 10 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o freetype-2.10.1.tar.gz "$u"; then
+                break
+              fi
+            done
+          fi
+          ls -lh freetype-2.10.1.tar.gz
+
+      - name: Ensure signing secrets are configured
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in KEYSTORE_B64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "Secret ausente: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Build unsigned release APK
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          export CONFIG_SITE="$GITHUB_WORKSPACE/android/config.site"
+          buildozer -v android release
+
+      - name: Sign release APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -e
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > /tmp/tibiatools-release.keystore
+          UNSIGNED_APK="$(find bin -maxdepth 1 -type f \( -name '*release*.apk' -o -name '*unsigned*.apk' \) | sort | head -n 1)"
+          if [ -z "$UNSIGNED_APK" ]; then
+            echo 'APK de release não encontrado em bin/' >&2
+            find bin -maxdepth 2 -type f | sort
+            exit 1
+          fi
+          BUILD_TOOLS_DIR="$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          if [ -z "$BUILD_TOOLS_DIR" ]; then
+            echo 'build-tools não encontrado no SDK Android.' >&2
+            exit 1
+          fi
+          ALIGNED_APK="bin/tibiatools-${RELEASE_TAG}-aligned.apk"
+          SIGNED_APK="bin/tibiatools-${RELEASE_TAG}.apk"
+          "$BUILD_TOOLS_DIR/zipalign" -f 4 "$UNSIGNED_APK" "$ALIGNED_APK"
+          "$BUILD_TOOLS_DIR/apksigner" sign \
+            --ks /tmp/tibiatools-release.keystore \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+          "$BUILD_TOOLS_DIR/apksigner" verify "$SIGNED_APK"
+          echo "SIGNED_APK=$SIGNED_APK" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_AS_LATEST: ${{ inputs.publish_as_latest || 'true' }}
+          DRAFT_RELEASE: ${{ inputs.draft || 'false' }}
+        run: |
+          set -e
+          ASSET_LABEL="${SIGNED_APK}#Tibia Tools APK"
+          LATEST_FLAG='--latest'
+          DRAFT_FLAG=''
+          if [ "$PUBLISH_AS_LATEST" != 'true' ]; then
+            LATEST_FLAG='--latest=false'
+          fi
+          if [ "$DRAFT_RELEASE" = 'true' ]; then
+            DRAFT_FLAG='--draft'
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ASSET_LABEL" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$ASSET_LABEL" \
+              --title "$RELEASE_TAG" \
+              --generate-notes \
+              $LATEST_FLAG \
+              $DRAFT_FLAG
+          fi
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-release-${{ env.RELEASE_TAG }}
+          path: ${{ env.SIGNED_APK }}
+          if-no-files-found: error
+
+      - name: Upload build logs (se existir)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-release-logs-${{ env.RELEASE_TAG }}
+          path: |
+            .buildozer/*.log
+            .buildozer/android/platform/python-for-android/**/*.log
+            .buildozer/android/platform/python-for-android/**/build.log
+          if-no-files-found: ignore
