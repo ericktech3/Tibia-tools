@@ -354,6 +354,13 @@ class FavoritesControllerMixin:
         try:
             if hasattr(self, "select_home_tab"):
                 self.select_home_tab("tab_char")
+            else:
+                home = self._get_home_screen()
+                if home is not None:
+                    ids = self._get_home_ids(home)
+                    bottom_nav = ids.get("bottom_nav") if hasattr(ids, "get") else None
+                    if bottom_nav is not None and hasattr(bottom_nav, "switch_tab"):
+                        bottom_nav.switch_tab("tab_char")
         except Exception:
             log_current_exception(prefix="[fav] falha ao trocar para aba Char")
 
