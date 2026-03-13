@@ -40,7 +40,7 @@ source.exclude_dirs = tests,__pycache__,.git,.github,.pytest_cache
 source.exclude_patterns = *.bak,*.orig,*.pyc,*.pyo
 
 # (str) Application versioning (method 1)
-version = 0.1.0
+version = 1.0
 
 # (list) Application requirements
 # ✅ trava o KivyMD na versão compatível com MDBottomNavigation etc.
