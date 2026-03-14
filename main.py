@@ -346,6 +346,8 @@ class TibiaToolsApp(CharControllerMixin, FavoritesControllerMixin, SettingsContr
             if self._back_bound:
                 return
             Window.bind(on_keyboard=self._on_window_keyboard)
+            Window.bind(on_key_down=self._on_window_key_down)
+            Window.bind(on_key_up=self._on_window_key_up)
             Window.bind(on_request_close=self._on_window_request_close)
             self._back_bound = True
         except Exception:
@@ -356,6 +358,8 @@ class TibiaToolsApp(CharControllerMixin, FavoritesControllerMixin, SettingsContr
             if not self._back_bound:
                 return
             Window.unbind(on_keyboard=self._on_window_keyboard)
+            Window.unbind(on_key_down=self._on_window_key_down)
+            Window.unbind(on_key_up=self._on_window_key_up)
             Window.unbind(on_request_close=self._on_window_request_close)
         except Exception:
             pass
@@ -506,21 +510,49 @@ class TibiaToolsApp(CharControllerMixin, FavoritesControllerMixin, SettingsContr
         except Exception:
             return False
 
-    def _on_window_keyboard(self, _window, key, *_args):
+    def _is_android_back_key(self, key=None, scancode=None) -> bool:
         try:
-            if key not in (27, 1001):
+            key_i = None if key is None else int(key)
+        except Exception:
+            key_i = key
+        try:
+            scan_i = None if scancode is None else int(scancode)
+        except Exception:
+            scan_i = scancode
+        return key_i in (4, 27, 1001) or scan_i in (4, 27)
+
+    def _dispatch_android_back(self) -> bool:
+        if self._is_duplicate_back_event():
+            return True
+        return bool(self._handle_back_navigation())
+
+    def _on_window_keyboard(self, _window, key, scancode=None, *_args):
+        try:
+            if not self._is_android_back_key(key, scancode):
                 return False
-            if self._is_duplicate_back_event():
-                return True
-            return bool(self._handle_back_navigation())
+            return self._dispatch_android_back()
+        except Exception:
+            return False
+
+    def _on_window_key_down(self, _window, key, scancode=None, *_args):
+        try:
+            if not self._is_android_back_key(key, scancode):
+                return False
+            return self._dispatch_android_back()
+        except Exception:
+            return False
+
+    def _on_window_key_up(self, _window, key, scancode=None, *_args):
+        try:
+            if not self._is_android_back_key(key, scancode):
+                return False
+            return True
         except Exception:
             return False
 
     def _on_window_request_close(self, *_args):
         try:
-            if self._is_duplicate_back_event():
-                return True
-            return bool(self._handle_back_navigation())
+            return self._dispatch_android_back()
         except Exception:
             return False
 
